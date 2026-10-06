@@ -80,7 +80,16 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon --build-cache --parallel
+          set +e
+          ./gradlew :app:assembleRelease --no-daemon --build-cache --parallel 2>&1 | tee ../gradle.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            # Show the cause as an annotation, readable without opening the log.
+            MSG=$( (grep -E '^e: |error:|FAILED' ../gradle.log | head -n 20; grep -A 25 'What went wrong' ../gradle.log | head -n 40) | sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\r//g' -e 's/\n/%0A/g')
+            echo "::error title=Gradle build failed::$MSG"
+            exit "$STATUS"
+          fi
           APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
           mkdir -p ../release
           cp "$APK" "../release/vega-fork-v${VERSION}-universal.apk"

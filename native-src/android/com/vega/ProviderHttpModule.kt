@@ -155,7 +155,7 @@ class ProviderHttpModule(reactContext: ReactApplicationContext) : ReactContextBa
  * AES-128 on the way. OkHttp speaks HTTP/2 (some CDNs refuse HTTP/1.1), and
  * keeping the bytes out of JavaScript stops large downloads freezing the UI.
  */
-private val segmentExecutor = Executors.newFixedThreadPool(6)
+private val segmentExecutor = Executors.newFixedThreadPool(16)
 
 private fun ProviderHttpModule.runSegmentDownload(
     url: String,
