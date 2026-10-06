@@ -93,3 +93,6 @@ google-services.json
 #env
 .env
 .env.*
+# Local build output and stray copies
+/dist-apk/
+/android 3/
