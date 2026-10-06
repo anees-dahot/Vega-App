@@ -37,7 +37,7 @@ if (project.android) {
 `;
       fs.writeFileSync(helperGradle, helperContent, 'utf8');
 
-      // Write ABI splits gradle which disables splits and ensures universal ARM build
+      // Write ABI splits gradle which disables splits and builds for 64-bit ARM only
       const abiSplitsContent = `// Auto-applied by with-android-release-gradle config plugin
 if (project.android) {
   project.android {
@@ -48,7 +48,7 @@ if (project.android) {
     }
     defaultConfig {
       ndk {
-        abiFilters 'armeabi-v7a', 'arm64-v8a'
+        abiFilters 'arm64-v8a'
       }
     }
   }

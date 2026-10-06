@@ -89,7 +89,7 @@ module.exports = () => {
             abi: {
               enable: true,
               reset: false,
-              include: ['armeabi-v7a', 'arm64-v8a'],
+              include: ['arm64-v8a'],
               universalApk: true,
             },
           },
@@ -101,7 +101,7 @@ module.exports = () => {
                 abi: {
                   enable: true,
                   reset: false,
-                  include: ['armeabi-v7a', 'arm64-v8a'],
+                  include: ['arm64-v8a'],
                 },
               },
             },
