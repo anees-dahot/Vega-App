@@ -1,0 +1,503 @@
+import {useFocusEffect, useIsFocused, useNavigation} from '@react-navigation/native';
+import {
+  NativeStackNavigationProp,
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack';
+import {StatusBar} from 'expo-status-bar';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {
+  BackHandler,
+  FlatList,
+  Image,
+  Linking,
+  RefreshControl,
+  ToastAndroid,
+  UIManager,
+  View,
+  findNodeHandle,
+} from 'react-native';
+import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
+import {HomeStackParamList, TabStackParamList} from '../../App';
+import {isSafeExternalUrl} from '../../lib/sandbox/urlGuard';
+import Button from '../../components/ui/Button';
+import AppText from '../../components/ui/Text';
+import {QueryErrorBoundary} from '../../components/ErrorBoundary';
+import SeasonList from '../../components/SeasonList';
+import SkeletonLoader from '../../components/Skeleton';
+import {useContentDetails} from '../../lib/hooks/useContentInfo';
+import {extractImageAccent, getCachedImageAccent} from '../../lib/imageAccent';
+import type {Link} from '../../lib/providers/types';
+import {settingsStorage} from '../../lib/storage';
+import useContentStore from '../../lib/zustand/contentStore';
+import useWatchListStore from '../../lib/zustand/watchListStore';
+import {M3PaletteContext, useM3Colors} from '../../theme/M3PaletteContext';
+import type {MaterialColors} from '../../theme/colors';
+import {buildDetailPalette} from '../../theme/detailPalette';
+import ContentOverview from './components/ContentOverview';
+import InfoStoryModal from './components/InfoStoryModal';
+import LibraryCollectionDialog from '../../components/library/LibraryCollectionDialog';
+import InfoSkeleton from './components/InfoSkeleton';
+import OtherProviders from './components/OtherProviders';
+import MoreLikeThis from './components/MoreLikeThis';
+import StatusBarScrim from '../../components/ui/StatusBarScrim';
+import {TVFocusGuide} from '../../components/tv';
+import {isTV} from '../../lib/tv';
+import useTVNavigationStore from '../../lib/zustand/tvNavigationStore';
+
+type Props = NativeStackScreenProps<HomeStackParamList, 'Info'>;
+
+export default function Info({route, navigation}: Props): React.JSX.Element {
+  const colors = useM3Colors();
+  const searchNavigation =
+    useNavigation<NativeStackNavigationProp<TabStackParamList>>();
+  const provider = useContentStore(state => state.provider);
+  const installedProviders = useContentStore(state => state.installedProviders);
+  const addItem = useWatchListStore(state => state.addItem);
+  const removeItem = useWatchListStore(state => state.removeItem);
+  const hasCustomCollections = useWatchListStore(
+    state => state.collections.length > 0,
+  );
+  const providerValue = route.params.provider || provider.value;
+  const {
+    info,
+    meta,
+    isLoading,
+    isSynopsisLoading,
+    error,
+    refetch,
+  } = useContentDetails(route.params.link, providerValue);
+  const inLibrary = useWatchListStore(state =>
+    state.watchList.some(item => item.link === route.params.link),
+  );
+  const [collectionPickerVisible, setCollectionPickerVisible] = useState(false);
+  const [readMore, setReadMore] = useState(false);
+  const [storyVisible, setStoryVisible] = useState(false);
+  const screenFocused = useIsFocused();
+  const backButtonRef = useRef<View>(null);
+  const registerBackFocus = useCallback(() => {
+    if (!isTV || !screenFocused) return;
+    const handle = findNodeHandle(backButtonRef.current);
+    if (handle) useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
+  }, [screenFocused]);
+
+  useFocusEffect(useCallback(() => {
+    if (!isTV) return;
+    // The back button takes first focus through hasTVPreferredFocus. On return
+    // from Player, the focused episode restores itself, so do not move focus.
+    return () => {
+      const handle = findNodeHandle(backButtonRef.current);
+      const store = useTVNavigationStore.getState();
+      if (handle && store.activeScreenFocusHandle === handle) {
+        store.setActiveScreenFocusHandle(null);
+      }
+    };
+  }, []));
+  const exploreRef = useRef<View>(null);
+  const closeStory = useCallback(() => {
+    setStoryVisible(false);
+    if (isTV) {
+      setTimeout(() => {
+        const handle = findNodeHandle(exploreRef.current);
+        if (handle) {
+          UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+        }
+      }, 100);
+    }
+  }, []);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [isAtTop, setIsAtTop] = useState(true);
+  const initialPoster = route.params.poster;
+  const initialCacheKey = initialPoster
+    ? `detail-bg-accent-v1:${initialPoster}`
+    : '';
+  const cachedInitialAccent = initialCacheKey
+    ? getCachedImageAccent(initialCacheKey)
+    : undefined;
+
+  const [imageAccent, setImageAccent] = useState<string | undefined>(
+    () => cachedInitialAccent,
+  );
+  const [initialAccentReady, setInitialAccentReady] = useState(
+    () =>
+      !settingsStorage.isDynamicInfoAccentEnabled() ||
+      !route.params.poster ||
+      !!cachedInitialAccent,
+  );
+  const imageAccentRequest = useRef(0);
+  const [statusBarScrimVisible, setStatusBarScrimVisible] = useState(false);
+  const dynamicInfoAccentEnabled = settingsStorage.isDynamicInfoAccentEnabled();
+  const contentProviderName = useMemo(
+    () =>
+      installedProviders.find(item => item.value === providerValue)
+        ?.display_name || providerValue,
+    [installedProviders, providerValue],
+  );
+
+  const displayTitle = meta?.name || info?.title;
+  const displayLogo = meta?.logo || info?.logo;
+  const synopsis =
+    meta?.description || info?.synopsis || 'No synopsis available';
+  const posterImage =
+    info?.poster ||
+    meta?.poster ||
+    route.params.poster ||
+    info?.image ||
+    'https://placehold.jp/24/363636/ffffff/500x750.png?text=Vega';
+  const accentBackground =
+    meta?.background || info?.image || route.params.poster;
+  const backgroundImage =
+    meta?.background ||
+    info?.image ||
+    'https://placehold.jp/24/363636/ffffff/900x1200.png?text=Vega';
+
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      const onBack = () => {
+        navigation.goBack();
+        return true;
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+      return () => sub.remove();
+    }, [navigation]),
+  );
+
+  useEffect(() => {
+    if (!dynamicInfoAccentEnabled) {
+      imageAccentRequest.current += 1;
+      setImageAccent(undefined);
+      setInitialAccentReady(true);
+      return;
+    }
+    const bg = accentBackground;
+    if (!bg) {
+      setInitialAccentReady(true);
+      return;
+    }
+    const request = ++imageAccentRequest.current;
+    extractImageAccent(bg, `detail-bg-accent-v1:${bg}`).then(
+      extractedColor => {
+        if (request !== imageAccentRequest.current) {
+          return;
+        }
+        if (extractedColor) {
+          setImageAccent(extractedColor);
+        }
+        setInitialAccentReady(true);
+      },
+    );
+  }, [accentBackground, dynamicInfoAccentEnabled]);
+
+  const detailColors = useMemo<MaterialColors>(
+    () => (imageAccent ? buildDetailPalette(colors, imageAccent) : colors),
+    [colors, imageAccent],
+  );
+
+  const webUrl = info?.webUrl?.trim();
+  const linkList = info?.linkList;
+  const filteredLinkList = useMemo(() => {
+    if (!linkList) {
+      return [];
+    }
+    const excludedQualities = settingsStorage.getExcludedQualities();
+    const filtered = linkList.filter(
+      (item: Link) =>
+        !item.quality || !excludedQualities.includes(item.quality),
+    );
+    return filtered.length > 0 ? filtered : linkList;
+  }, [linkList]);
+
+  // Promise chain instead of try/finally: React Compiler skips any component
+  // that contains a finally clause.
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    setRefreshVersion(version => version + 1);
+    return Promise.race([
+      refetch(),
+      new Promise(resolve => setTimeout(resolve, 10000)),
+    ]).finally(() => {
+      setTimeout(() => {
+        setRefreshing(false);
+      }, 50);
+    });
+  }, [refetch]);
+
+  const handleScroll = useCallback((event: any) => {
+    const offsetY = event.nativeEvent?.contentOffset?.y ?? 0;
+    setStatusBarScrimVisible(offsetY > 12);
+    setIsAtTop(offsetY <= 0);
+  }, []);
+
+  const toggleLibrary = useCallback(() => {
+    if (settingsStorage.isHapticFeedbackEnabled()) {
+      ReactNativeHapticFeedback.trigger('effectClick', {
+        enableVibrateFallback: true,
+        ignoreAndroidSystemSettings: false,
+      });
+    }
+    // With categories, ask where to save. With only the default one, toggle.
+    if (hasCustomCollections) {
+      setCollectionPickerVisible(true);
+      return;
+    }
+    if (inLibrary) {
+      removeItem(route.params.link);
+      return;
+    }
+    addItem({
+      title: displayTitle,
+      poster: posterImage,
+      link: route.params.link,
+      provider: providerValue,
+    });
+  }, [
+    addItem,
+    displayTitle,
+    hasCustomCollections,
+    inLibrary,
+    posterImage,
+    providerValue,
+    removeItem,
+    route.params.link,
+  ]);
+
+  const searchFor = useCallback(
+    (query?: string) => {
+      if (!query) {
+        return;
+      }
+      searchNavigation.navigate('SearchStack', {
+        screen: 'SearchResults',
+        params: {filter: query},
+      } as never);
+    },
+    [searchNavigation],
+  );
+  const searchTitle = useCallback(() => searchFor(displayTitle), [displayTitle, searchFor]);
+
+  const handleOpenWeb = useCallback(() => {
+    if (!webUrl) {
+      return;
+    }
+    if (settingsStorage.isSkipInAppWebview()) {
+      if (!isSafeExternalUrl(webUrl)) {
+        ToastAndroid.show('Unsupported link', ToastAndroid.SHORT);
+        return;
+      }
+      Linking.openURL(webUrl).catch(() => {
+        ToastAndroid.show('Failed to open browser', ToastAndroid.SHORT);
+      });
+    } else {
+      navigation.navigate('Webview', {link: webUrl});
+    }
+  }, [navigation, webUrl]);
+
+  if (error && !info) {
+    return (
+      <View
+        style={{
+          alignItems: 'center',
+          backgroundColor: colors.background,
+          flex: 1,
+          justifyContent: 'center',
+          padding: 24,
+        }}>
+        <StatusBar style="light" />
+        <AppText
+          role="headlineSmallEmphasized"
+          style={{color: colors.error, textAlign: 'center'}}>
+          Failed to load content
+        </AppText>
+        <AppText
+          role="bodyMedium"
+          style={{
+            color: colors.onSurfaceVariant,
+            marginTop: 8,
+            textAlign: 'center',
+          }}>
+          {error.message || 'An unexpected error occurred'}
+        </AppText>
+        <View style={{flexDirection: 'row', gap: 10, marginTop: 22}}>
+          <Button variant="destructive" onPress={handleRefresh}>
+            Try again
+          </Button>
+          <Button variant="tonal" onPress={navigation.goBack}>
+            Go back
+          </Button>
+        </View>
+      </View>
+    );
+  }
+
+  const isContentLoading =
+    !info || (dynamicInfoAccentEnabled && !initialAccentReady);
+  if (isContentLoading) {
+    return (
+      <View style={{backgroundColor: '#000000', flex: 1}}>
+        <StatusBar style="light" />
+        <InfoSkeleton onBack={navigation.goBack} />
+      </View>
+    );
+  }
+
+  return (
+    <QueryErrorBoundary>
+      <M3PaletteContext.Provider value={detailColors}>
+        <View style={{backgroundColor: detailColors.background, flex: 1}}>
+          <View
+            pointerEvents="none"
+            style={{
+              height: 340,
+              left: 0,
+              position: 'absolute',
+              right: 0,
+              top: 0,
+            }}>
+            <Image
+              source={{uri: backgroundImage}}
+              resizeMode="cover"
+              resizeMethod="resize"
+              style={{height: 340, width: '100%'}}
+            />
+          </View>
+          <StatusBarScrim visible={statusBarScrimVisible} />
+          <StatusBar style="light" />
+          <TVFocusGuide autoFocus={true} trapFocusDown={true} trapFocusRight={true} style={{flex: 1}}>
+          <FlatList
+            style={{backgroundColor: 'transparent'}}
+            data={[]}
+            keyExtractor={(_, index) => String(index)}
+            renderItem={() => null}
+            ListHeaderComponent={
+              <>
+                <ContentOverview
+                  backgroundImage={backgroundImage}
+                  genres={meta?.genres}
+                  inLibrary={inLibrary}
+                  isLoading={isLoading && !info}
+                  logo={displayLogo}
+                  onBack={navigation.goBack}
+                  backButtonRef={backButtonRef}
+                  onBackButtonLayout={registerBackFocus}
+                  onOpenStory={
+                    info?.tmdbId || info?.imdbId
+                      ? () => setStoryVisible(true)
+                      : undefined
+                  }
+                  exploreRef={exploreRef}
+                  onOpenWeb={webUrl ? handleOpenWeb : undefined}
+                  onSearchTitle={searchTitle}
+                  onToggleLibrary={toggleLibrary}
+                  onToggleSynopsis={() => setReadMore(value => !value)}
+                  providerName={contentProviderName}
+                  rating={meta?.imdbRating || info?.rating}
+                  readMore={readMore}
+                  runtime={meta?.runtime}
+                  synopsis={synopsis}
+                  synopsisLoading={isSynopsisLoading}
+                  tags={info?.tags}
+                  title={displayTitle}
+                  trailerUrl={info?.trailerUrl?.trim()}
+                  year={meta?.year}
+                />
+                <View
+                  style={{
+                    backgroundColor: detailColors.background,
+                    paddingHorizontal: 18,
+                    paddingTop: 24,
+                  }}>
+                  {isLoading && !info ? (
+                    <View style={{gap: 12}}>
+                      <SkeletonLoader show height={28} width={120} />
+                      <SkeletonLoader show height={72} width="100%" />
+                    </View>
+                  ) : (
+                    <>
+                    <OtherProviders
+                      title={displayTitle}
+                      currentProvider={providerValue}
+                      onOpen={match =>
+                        navigation.push('Info', {
+                          link: match.post.link,
+                          provider: match.providerValue,
+                          poster: match.post.image,
+                        })
+                      }
+                    />
+                    <SeasonList
+                      refreshing={refreshing}
+                      refreshVersion={refreshVersion}
+                      providerValue={providerValue}
+                      LinkList={filteredLinkList}
+                      poster={{
+                        logo: displayLogo,
+                        poster: posterImage,
+                        background: backgroundImage,
+                      }}
+                      type={info?.type || 'series'}
+                      metaTitle={displayTitle}
+                      imdbId={info?.imdbId}
+                      synopsis={synopsis}
+                      routeParams={route.params}
+                    />
+                    <MoreLikeThis
+                      title={displayTitle}
+                      tmdbId={info?.tmdbId}
+                      imdbId={info?.imdbId}
+                      type={info?.type}
+                      onSearch={searchFor}
+                    />
+                    </>
+                  )}
+                </View>
+              </>
+            }
+            ListFooterComponent={
+              <View
+                style={{
+                  backgroundColor: detailColors.background,
+                  height: 110,
+                }}
+              />
+            }
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                colors={[detailColors.primary]}
+                progressBackgroundColor={detailColors.surfaceContainer}
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                enabled={isAtTop || refreshing}
+              />
+            }
+          />
+          </TVFocusGuide>
+          <InfoStoryModal
+            fallbackBackdrop={backgroundImage}
+            fallbackOverview={synopsis}
+            fallbackTitle={displayTitle}
+            imdbId={info?.imdbId}
+            onClose={closeStory}
+            tmdbId={info?.tmdbId}
+            type={info?.type}
+            visible={storyVisible}
+          />
+          <LibraryCollectionDialog
+            visible={collectionPickerVisible}
+            onClose={() => setCollectionPickerVisible(false)}
+            item={{
+              title: displayTitle,
+              poster: posterImage,
+              link: route.params.link,
+              provider: providerValue,
+            }}
+          />
+        </View>
+      </M3PaletteContext.Provider>
+    </QueryErrorBoundary>
+  );
+}

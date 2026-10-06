@@ -1,0 +1,95 @@
+name: Fork Release
+
+# Push a tag like v5.4.7 (npm run release -- 5.4.7 does it for you). This builds
+# the APK and publishes it as a GitHub release; the app checks this repository's
+# latest release and offers the update.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Read app version
+        run: |
+          VERSION=$(node -e "process.env.APP_VARIANT='';console.log(require('./app.config.js')().expo.version)")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match app version v$VERSION in app.config.js"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # Updates install over the old app only when signed with the same key.
+          # Without secrets, use the debug.keystore the existing APKs were signed with.
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "MYAPP_UPLOAD_STORE_FILE=$RUNNER_TEMP/release.keystore" >> $GITHUB_ENV
+            echo "MYAPP_UPLOAD_STORE_PASSWORD=$KEYSTORE_PASSWORD" >> $GITHUB_ENV
+            echo "MYAPP_UPLOAD_KEY_ALIAS=$KEY_ALIAS" >> $GITHUB_ENV
+            echo "MYAPP_UPLOAD_KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
+          else
+            echo "MYAPP_UPLOAD_STORE_FILE=$GITHUB_WORKSPACE/debug.keystore" >> $GITHUB_ENV
+            echo "MYAPP_UPLOAD_STORE_PASSWORD=android" >> $GITHUB_ENV
+            echo "MYAPP_UPLOAD_KEY_ALIAS=androiddebugkey" >> $GITHUB_ENV
+            echo "MYAPP_UPLOAD_KEY_PASSWORD=android" >> $GITHUB_ENV
+          fi
+
+      - name: Generate native project
+        env:
+          UPDATE_REPO: ${{ github.repository }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          PROXY_API_URL: ${{ secrets.PROXY_API_URL }}
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build APK
+        env:
+          UPDATE_REPO: ${{ github.repository }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          PROXY_API_URL: ${{ secrets.PROXY_API_URL }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          mkdir -p ../release
+          cp "$APK" "../release/vega-fork-v${VERSION}-universal.apk"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${VERSION}"
+          NOTES=$(git log -1 --pretty=%B)
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" release/*.apk --clobber
+          else
+            gh release create "$TAG" release/*.apk --title "Vega Fork $TAG" --notes "$NOTES"
+          fi

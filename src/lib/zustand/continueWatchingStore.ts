@@ -1,0 +1,68 @@
+import {create} from 'zustand';
+import {createJSONStorage, persist} from 'zustand/middleware';
+import type {EpisodeLink} from '../providers/types';
+import {createZustandStorage} from '../storage/StorageService';
+
+export interface ContinueWatchingItem {
+  id: string;
+  title: string;
+  episodeTitle?: string;
+  /** Season (link group) of the episode, used by the Resume button. */
+  seasonTitle?: string;
+  /** Title of the episode after this one, when the list had one. */
+  nextTitle?: string;
+  episode: EpisodeLink;
+  type: string;
+  poster?: string;
+  background?: string;
+  providerValue: string;
+  infoUrl: string;
+  position: number;
+  duration: number;
+  updatedAt: number;
+}
+
+interface ContinueWatchingState {
+  items: ContinueWatchingItem[];
+  upsertItem: (item: ContinueWatchingItem) => void;
+  updateProgress: (id: string, position: number, duration: number) => void;
+  removeItem: (id: string) => void;
+}
+
+const useContinueWatchingStore = create<ContinueWatchingState>()(
+  persist(
+    set => ({
+      items: [],
+      upsertItem: item =>
+        set(state => ({
+          // Trim only the other items. A new show starts with updatedAt 0 and
+          // would be cut right away if the list is already full.
+          items: [
+            item,
+            ...state.items
+              .filter(existing => existing.id !== item.id)
+              .sort((a, b) => b.updatedAt - a.updatedAt)
+              .slice(0, 29),
+          ].sort((a, b) => b.updatedAt - a.updatedAt),
+        })),
+      updateProgress: (id, position, duration) =>
+        set(state => ({
+          items: state.items
+            .map(item =>
+              item.id === id
+                ? {...item, position, duration, updatedAt: Date.now()}
+                : item,
+            )
+            .sort((a, b) => b.updatedAt - a.updatedAt),
+        })),
+      removeItem: id =>
+        set(state => ({items: state.items.filter(item => item.id !== id)})),
+    }),
+    {
+      name: 'continue-watching-storage',
+      storage: createJSONStorage(() => createZustandStorage()),
+    },
+  ),
+);
+
+export default useContinueWatchingStore;

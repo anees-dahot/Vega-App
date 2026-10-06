@@ -1,0 +1,17 @@
+// Auto-applied by with-android-release-gradle config plugin
+if (project.android) {
+  // One APK for phone and TV: no variant in the name, so the in-app updater
+  // picks the same file on both.
+  def baseAppName = "vega"
+  project.ext { appName = baseAppName }
+
+  project.android.applicationVariants.all { variant ->
+    variant.outputs.each { output ->
+      def version = variant.versionName
+      def newName = output.outputFile.name
+      newName = newName.replace("app-", "${project.ext.appName}-")
+      newName = newName.replace("-release", "-v" + version)
+      output.outputFileName = newName
+    }
+  }
+}

@@ -1,0 +1,859 @@
+import {mainStorage} from './StorageService';
+import {
+  DownloadLocationConfig,
+  getDownloadLocationDisplayValue,
+  parseDownloadLocation,
+  serializeDownloadLocation,
+} from '../downloadLocation';
+
+/**
+ * Storage keys for settings
+ */
+export enum SettingsKeys {
+  // UI preferences
+  PRIMARY_COLOR = 'primaryColor',
+  IS_CUSTOM_THEME = 'isCustomTheme',
+  SHOW_TAB_BAR_LABELS = 'showTabBarLabels',
+  HIDE_DOWNLOADS_TAB = 'hideDownloadsTab',
+  SHOW_CONTINUE_WATCHING = 'showContinueWatching',
+  CUSTOM_COLOR = 'customColor',
+  ACCENT_SOURCE = 'accentSource',
+  LAUNCHER_ICON = 'launcherIcon',
+  DYNAMIC_INFO_ACCENT = 'dynamicInfoAccent',
+  // Feedback settings
+  HAPTIC_FEEDBACK = 'hapticFeedback',
+  NOTIFICATIONS_ENABLED = 'notificationsEnabled',
+
+  // Update settings
+  AUTO_CHECK_UPDATE = 'autoCheckUpdate',
+  AUTO_DOWNLOAD = 'autoDownload',
+
+  // Player settings
+  SHOW_MEDIA_CONTROLS = 'showMediaControls',
+  SHOW_HAMBURGER_MENU = 'showHamburgerMenu',
+  HIDE_SEEK_BUTTONS = 'hideSeekButtons',
+  SHOW_PLAYER_EPISODE_SIDEBAR = 'showPlayerEpisodeSidebar',
+  AUTOPLAY_NEXT_EPISODE = 'autoplayNextEpisode',
+  PLAY_IN_BACKGROUND = 'playInBackground',
+  AUTO_SUBTITLE_SEARCH = 'autoSubtitleSearch',
+  UPDATE_REPO = 'updateRepo',
+  PROVIDER_HEALTH_AUTO = 'providerHealthAuto',
+  AIRING_REMINDERS = 'airingReminders',
+  COMMUNITY_SKIPS = 'communitySkips',
+  AUTO_BACKUP_ENABLED = 'autoBackupEnabled',
+  AUTO_BACKUP_FOLDER = 'autoBackupFolder',
+  AUTO_BACKUP_INTERVAL_DAYS = 'autoBackupIntervalDays',
+  AUTO_BACKUP_LAST_AT = 'autoBackupLastAt',
+  NEW_EPISODE_CHECK = 'newEpisodeCheck',
+  PRELOAD_NEXT_EPISODE = 'preloadNextEpisode',
+  AUTO_DOWNLOAD_NEW_EPISODES = 'autoDownloadNewEpisodes',
+  AUTO_SWITCH_PROVIDER = 'autoSwitchProvider',
+  ENABLE_2X_GESTURE = 'enable2xGesture',
+  ENABLE_SWIPE_GESTURE = 'enableSwipeGesture',
+  FORWARD_BUFFER_MB = 'forwardBufferMB',
+  BACK_BUFFER_MB = 'backBufferMB',
+
+  // Quality settings
+  EXCLUDED_QUALITIES = 'excludedQualities',
+
+  // Download settings
+  DOWNLOAD_LOCATION = 'downloadLocation',
+  DOWNLOAD_CONCURRENCY = 'downloadConcurrency',
+  DOWNLOAD_WIFI_ONLY = 'downloadWifiOnly',
+  DOWNLOAD_SCHEDULE_ENABLED = 'downloadScheduleEnabled',
+  DOWNLOAD_SCHEDULE_START = 'downloadScheduleStartMinutes',
+  DOWNLOAD_SCHEDULE_END = 'downloadScheduleEndMinutes',
+  DOWNLOAD_CONNECTIONS = 'downloadConnections',
+  DOWNLOAD_MIN_FREE_MB = 'downloadMinFreeMb',
+  DOWNLOAD_AUTO_CLEAN_WATCHED = 'downloadAutoCleanWatched',
+  DOWNLOAD_SUBTITLES = 'downloadSubtitles',
+  DOWNLOAD_SUBTITLE_LANGUAGE = 'downloadSubtitleLanguage',
+
+  // Subtitle settings
+  SUBTITLE_FONT_SIZE = 'subtitleFontSize',
+  SUBTITLE_OPACITY = 'subtitleOpacity',
+  SUBTITLE_TEXT_OPACITY = 'subtitleTextOpacity',
+  SUBTITLE_BOTTOM_PADDING = 'subtitleBottomPadding',
+  SUBTITLE_TEXT_COLOR = 'subtitleTextColor',
+  SUBTITLE_FONT_FAMILY = 'subtitleFontFamily',
+  SUBTITLE_EDGE_TYPE = 'subtitleEdgeType',
+  SUBTITLE_EDGE_COLOR = 'subtitleEdgeColor',
+  SUBTITLE_OUTLINE_WIDTH = 'subtitleOutlineWidth',
+
+  LIST_VIEW_TYPE = 'viewType',
+
+  // Telemetry (privacy)
+  TELEMETRY_OPT_IN = 'telemetryOptIn',
+
+  // Metadata services
+  TMDB_API_KEY = 'tmdbApiKey',
+  TMDB_API_KEY_REVISION = 'tmdbApiKeyRevision',
+
+  // DNS over HTTPS
+  DOH_ENABLED = 'dohEnabled',
+  DOH_PROVIDER = 'dohProvider',
+  DOH_CUSTOM_URL = 'dohCustomUrl',
+
+  // Cloudflare WARP
+  WARP_ENABLED = 'warpEnabled',
+
+  // ByeDPI Anti-DPI
+  BYEDPI_ENABLED = 'byedpiEnabled',
+  BYEDPI_CMD_ARGS = 'byedpiCmdArgs',
+
+  // Webview
+  SKIP_IN_APP_WEBVIEW = 'skipInAppWebview',
+
+  // Remote Playback
+  ALWAYS_CAST_MODE = 'alwaysCastMode',
+  TORRENT_FULL_DOWNLOAD = 'torrentFullDownload',
+}
+
+
+/**
+ * Settings storage manager
+ */
+/**
+ * Buffer size choices in MB. Size, not time: a minute of a 50 GB remux is far
+ * bigger than a minute of a small encode. The patched native load control
+ * enforces both caps (and never exceeds 35% of the app heap).
+ */
+export const BUFFER_LIMITS = {
+  forwardMin: 16,
+  forwardMax: 256,
+  backMax: 128,
+  step: 16,
+} as const;
+const DEFAULT_FORWARD_BUFFER_MB = 64;
+const DEFAULT_BACK_BUFFER_MB = 0;
+
+/** Rounds to the slider step and clamps; falls back for missing values. */
+const clampBufferMB = (
+  value: number | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  const stepped = Math.round(value / BUFFER_LIMITS.step) * BUFFER_LIMITS.step;
+  return Math.min(Math.max(stepped, min), max);
+};
+
+export class SettingsStorage {
+  isAlwaysCastMode(): boolean {
+    return mainStorage.getBool(SettingsKeys.ALWAYS_CAST_MODE);
+  }
+
+  setAlwaysCastMode(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.ALWAYS_CAST_MODE, enabled);
+  }
+
+  /** Off: a torrent downloads only about a minute ahead of playback. */
+  isTorrentFullDownload(): boolean {
+    return mainStorage.getBool(SettingsKeys.TORRENT_FULL_DOWNLOAD, true);
+  }
+
+  setTorrentFullDownload(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.TORRENT_FULL_DOWNLOAD, enabled);
+  }
+
+  // Theme settings
+  getPrimaryColor(): string {
+    return mainStorage.getString(SettingsKeys.PRIMARY_COLOR) || '#FFFFFF';
+  }
+
+  setPrimaryColor(color: string): void {
+    mainStorage.setString(SettingsKeys.PRIMARY_COLOR, color);
+  }
+
+  isCustomTheme(): boolean {
+    return mainStorage.getBool(SettingsKeys.IS_CUSTOM_THEME);
+  }
+
+  setCustomTheme(isCustom: boolean): void {
+    mainStorage.setBool(SettingsKeys.IS_CUSTOM_THEME, isCustom);
+  }
+
+  getCustomColor(): string {
+    return mainStorage.getString(SettingsKeys.CUSTOM_COLOR) || '#FFFFFF';
+  }
+
+  setCustomColor(color: string): void {
+    mainStorage.setString(SettingsKeys.CUSTOM_COLOR, color);
+  }
+
+  /**
+   * Accent source for the Material 3 palette. `wallpaper` follows Material You
+   * (Android 12+), `custom` derives the palette from the stored seed color.
+   */
+  getAccentSource(): 'wallpaper' | 'custom' {
+    return mainStorage.getString(SettingsKeys.ACCENT_SOURCE) === 'wallpaper'
+      ? 'wallpaper'
+      : 'custom';
+  }
+
+  setAccentSource(source: 'wallpaper' | 'custom'): void {
+    mainStorage.setString(SettingsKeys.ACCENT_SOURCE, source);
+  }
+
+  isDynamicInfoAccentEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.DYNAMIC_INFO_ACCENT, true);
+  }
+
+  setDynamicInfoAccentEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.DYNAMIC_INFO_ACCENT, enabled);
+  }
+
+  getLauncherIcon(): 'white' | 'tomato' | 'gray' | 'blue' | 'lavender' {
+    const icon = mainStorage.getString(SettingsKeys.LAUNCHER_ICON);
+    return icon === 'white' ||
+      icon === 'gray' ||
+      icon === 'blue' ||
+      icon === 'lavender'
+      ? icon
+      : 'white';
+  }
+
+  setLauncherIcon(
+    icon: 'white' | 'tomato' | 'gray' | 'blue' | 'lavender',
+  ): void {
+    mainStorage.setString(SettingsKeys.LAUNCHER_ICON, icon);
+  }
+
+  // UI preferences
+  showTabBarLabels(): boolean {
+    return mainStorage.getBool(SettingsKeys.SHOW_TAB_BAR_LABELS, true);
+  }
+
+  setShowTabBarLabels(show: boolean): void {
+    mainStorage.setBool(SettingsKeys.SHOW_TAB_BAR_LABELS, show);
+  }
+
+  hideDownloadsTab(): boolean {
+    return mainStorage.getBool(SettingsKeys.HIDE_DOWNLOADS_TAB, false);
+  }
+
+  setHideDownloadsTab(hide: boolean): void {
+    mainStorage.setBool(SettingsKeys.HIDE_DOWNLOADS_TAB, hide);
+  }
+
+  /** Continue watching row on Home. Playback positions are saved either way. */
+  showContinueWatching(): boolean {
+    return mainStorage.getBool(SettingsKeys.SHOW_CONTINUE_WATCHING, true);
+  }
+
+  setShowContinueWatching(show: boolean): void {
+    mainStorage.setBool(SettingsKeys.SHOW_CONTINUE_WATCHING, show);
+  }
+
+  isHapticFeedbackEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.HAPTIC_FEEDBACK, true);
+  }
+  setHapticFeedbackEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.HAPTIC_FEEDBACK, enabled);
+  }
+
+  isNotificationsEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.NOTIFICATIONS_ENABLED, true);
+  }
+
+  setNotificationsEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.NOTIFICATIONS_ENABLED, enabled);
+  }
+
+  // Update settings
+  isAutoCheckUpdateEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.AUTO_CHECK_UPDATE, true);
+  }
+
+  setAutoCheckUpdateEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.AUTO_CHECK_UPDATE, enabled);
+  }
+
+  isAutoDownloadEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.AUTO_DOWNLOAD, false);
+  }
+
+  setAutoDownloadEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.AUTO_DOWNLOAD, enabled);
+  }
+
+  // Player settings
+  showMediaControls(): boolean {
+    return mainStorage.getBool(SettingsKeys.SHOW_MEDIA_CONTROLS, true);
+  }
+
+  setShowMediaControls(show: boolean): void {
+    mainStorage.setBool(SettingsKeys.SHOW_MEDIA_CONTROLS, show);
+  }
+
+  showHamburgerMenu(): boolean {
+    return mainStorage.getBool(SettingsKeys.SHOW_HAMBURGER_MENU, true);
+  }
+
+  setShowHamburgerMenu(show: boolean): void {
+    mainStorage.setBool(SettingsKeys.SHOW_HAMBURGER_MENU, show);
+  }
+
+  hideSeekButtons(): boolean {
+    return mainStorage.getBool(SettingsKeys.HIDE_SEEK_BUTTONS, false);
+  }
+
+  setHideSeekButtons(hide: boolean): void {
+    mainStorage.setBool(SettingsKeys.HIDE_SEEK_BUTTONS, hide);
+  }
+
+  /** Start the next episode after a short countdown when one ends. */
+  isAutoplayNextEpisode(): boolean {
+    return mainStorage.getBool(SettingsKeys.AUTOPLAY_NEXT_EPISODE, true);
+  }
+
+  setAutoplayNextEpisode(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.AUTOPLAY_NEXT_EPISODE, enabled);
+  }
+
+  /** Look up intro and outro times for anime from a community database. */
+  isCommunitySkipsEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.COMMUNITY_SKIPS, false);
+  }
+
+  setCommunitySkipsEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.COMMUNITY_SKIPS, enabled);
+  }
+
+  /** Master switch for airing reminders; each title still has its own. */
+  isAiringRemindersEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.AIRING_REMINDERS, true);
+  }
+
+  setAiringRemindersEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.AIRING_REMINDERS, enabled);
+  }
+
+  /** Test installed providers once a week when the app opens. */
+  isProviderHealthAuto(): boolean {
+    return mainStorage.getBool(SettingsKeys.PROVIDER_HEALTH_AUTO, false);
+  }
+
+  setProviderHealthAuto(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.PROVIDER_HEALTH_AUTO, enabled);
+  }
+
+  /** GitHub "owner/repo" to look for app updates in. Empty means the default. */
+  getUpdateRepo(): string {
+    return mainStorage.getString(SettingsKeys.UPDATE_REPO) || '';
+  }
+
+  setUpdateRepo(repo: string): void {
+    if (repo) {
+      mainStorage.setString(SettingsKeys.UPDATE_REPO, repo);
+    } else {
+      mainStorage.delete(SettingsKeys.UPDATE_REPO);
+    }
+  }
+
+  /** Save a backup file into a chosen folder now and then. */
+  isAutoBackupEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.AUTO_BACKUP_ENABLED, false);
+  }
+
+  setAutoBackupEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.AUTO_BACKUP_ENABLED, enabled);
+  }
+
+  /** Address of the backup folder (a folder the user picked), or empty. */
+  getAutoBackupFolder(): string {
+    return mainStorage.getString(SettingsKeys.AUTO_BACKUP_FOLDER) || '';
+  }
+
+  setAutoBackupFolder(uri: string): void {
+    mainStorage.setString(SettingsKeys.AUTO_BACKUP_FOLDER, uri);
+  }
+
+  /** Days between automatic backups: 1, 7 or 30. */
+  getAutoBackupIntervalDays(): number {
+    const value = mainStorage.getNumber(SettingsKeys.AUTO_BACKUP_INTERVAL_DAYS);
+    return value === 1 || value === 7 || value === 30 ? value : 7;
+  }
+
+  setAutoBackupIntervalDays(days: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.AUTO_BACKUP_INTERVAL_DAYS,
+      days === 1 || days === 30 ? days : 7,
+    );
+  }
+
+  /** When the last automatic backup was made, in seconds since 1970. 0 if never. */
+  getAutoBackupLastAt(): number {
+    return mainStorage.getNumber(SettingsKeys.AUTO_BACKUP_LAST_AT) || 0;
+  }
+
+  setAutoBackupLastAt(seconds: number): void {
+    mainStorage.setNumber(SettingsKeys.AUTO_BACKUP_LAST_AT, Math.max(Math.floor(seconds), 0));
+  }
+
+  /** Look for a subtitle online when a video has none. */
+  isAutoSubtitleSearch(): boolean {
+    return mainStorage.getBool(SettingsKeys.AUTO_SUBTITLE_SEARCH, false);
+  }
+
+  setAutoSubtitleSearch(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.AUTO_SUBTITLE_SEARCH, enabled);
+  }
+
+  /** Keep sound playing when the app is sent to the background. */
+  isPlayInBackground(): boolean {
+    return mainStorage.getBool(SettingsKeys.PLAY_IN_BACKGROUND, false);
+  }
+
+  setPlayInBackground(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.PLAY_IN_BACKGROUND, enabled);
+  }
+
+  /** Look for new episodes of watchlist shows when the app opens. */
+  isNewEpisodeCheckEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.NEW_EPISODE_CHECK, false);
+  }
+
+  setNewEpisodeCheckEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.NEW_EPISODE_CHECK, enabled);
+  }
+
+  /** Look up the next episode's links shortly before the current one ends. */
+  isPreloadNextEpisode(): boolean {
+    return mainStorage.getBool(SettingsKeys.PRELOAD_NEXT_EPISODE, true);
+  }
+
+  setPreloadNextEpisode(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.PRELOAD_NEXT_EPISODE, enabled);
+  }
+
+  /** Download new episodes of library shows by themselves when they are found. */
+  isAutoDownloadNewEpisodes(): boolean {
+    return mainStorage.getBool(SettingsKeys.AUTO_DOWNLOAD_NEW_EPISODES, false);
+  }
+
+  setAutoDownloadNewEpisodes(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.AUTO_DOWNLOAD_NEW_EPISODES, enabled);
+  }
+
+  /**
+   * When a video cannot be played: "ask" offers the same episode from another
+   * provider, "auto" switches by itself when the match is certain, "off" does nothing.
+   */
+  getProviderSwitchMode(): 'off' | 'ask' | 'auto' {
+    const value = mainStorage.getString(SettingsKeys.AUTO_SWITCH_PROVIDER);
+    return value === 'off' || value === 'auto' ? value : 'ask';
+  }
+
+  setProviderSwitchMode(mode: 'off' | 'ask' | 'auto'): void {
+    mainStorage.setString(SettingsKeys.AUTO_SWITCH_PROVIDER, mode);
+  }
+
+  showPlayerEpisodeSidebar(): boolean {
+    return mainStorage.getBool(SettingsKeys.SHOW_PLAYER_EPISODE_SIDEBAR, true);
+  }
+
+  setShowPlayerEpisodeSidebar(show: boolean): void {
+    mainStorage.setBool(SettingsKeys.SHOW_PLAYER_EPISODE_SIDEBAR, show);
+  }
+
+  isEnable2xGestureEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.ENABLE_2X_GESTURE, false);
+  }
+
+  setEnable2xGesture(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.ENABLE_2X_GESTURE, enabled);
+  }
+
+  isSwipeGestureEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.ENABLE_SWIPE_GESTURE, true);
+  }
+
+  setSwipeGestureEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.ENABLE_SWIPE_GESTURE, enabled);
+  }
+
+  // Quality settings
+  getExcludedQualities(): string[] {
+    return mainStorage.getArray<string>(SettingsKeys.EXCLUDED_QUALITIES) || [];
+  }
+
+  setExcludedQualities(qualities: string[]): void {
+    mainStorage.setArray(SettingsKeys.EXCLUDED_QUALITIES, qualities);
+  }
+
+  getDownloadLocationConfig(): DownloadLocationConfig | null {
+    return parseDownloadLocation(
+      mainStorage.getString(SettingsKeys.DOWNLOAD_LOCATION),
+    );
+  }
+
+  getDownloadLocation(): string {
+    return getDownloadLocationDisplayValue(this.getDownloadLocationConfig());
+  }
+
+  setDownloadLocation(location: DownloadLocationConfig): void {
+    mainStorage.setString(
+      SettingsKeys.DOWNLOAD_LOCATION,
+      serializeDownloadLocation(location),
+    );
+  }
+
+  resetDownloadLocation(): void {
+    mainStorage.delete(SettingsKeys.DOWNLOAD_LOCATION);
+  }
+
+  getForwardBufferMB(): number {
+    return clampBufferMB(
+      mainStorage.getNumber(SettingsKeys.FORWARD_BUFFER_MB),
+      BUFFER_LIMITS.forwardMin,
+      BUFFER_LIMITS.forwardMax,
+      DEFAULT_FORWARD_BUFFER_MB,
+    );
+  }
+
+  setForwardBufferMB(mb: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.FORWARD_BUFFER_MB,
+      clampBufferMB(
+        mb,
+        BUFFER_LIMITS.forwardMin,
+        BUFFER_LIMITS.forwardMax,
+        DEFAULT_FORWARD_BUFFER_MB,
+      ),
+    );
+  }
+
+  getBackBufferMB(): number {
+    return clampBufferMB(
+      mainStorage.getNumber(SettingsKeys.BACK_BUFFER_MB),
+      0,
+      BUFFER_LIMITS.backMax,
+      DEFAULT_BACK_BUFFER_MB,
+    );
+  }
+
+  setBackBufferMB(mb: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.BACK_BUFFER_MB,
+      clampBufferMB(mb, 0, BUFFER_LIMITS.backMax, DEFAULT_BACK_BUFFER_MB),
+    );
+  }
+
+  getDownloadConcurrency(): number {
+    const value = mainStorage.getNumber(SettingsKeys.DOWNLOAD_CONCURRENCY);
+    return typeof value === 'number' && Number.isFinite(value)
+      ? Math.min(Math.max(Math.round(value), 1), 5)
+      : 2;
+  }
+
+  setDownloadConcurrency(value: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.DOWNLOAD_CONCURRENCY,
+      Math.min(Math.max(Math.round(value), 1), 5),
+    );
+  }
+
+  /** Only start and continue downloads on an unmetered (Wi-Fi) connection. */
+  isDownloadWifiOnly(): boolean {
+    return mainStorage.getBool(SettingsKeys.DOWNLOAD_WIFI_ONLY, false);
+  }
+
+  setDownloadWifiOnly(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.DOWNLOAD_WIFI_ONLY, enabled);
+  }
+
+  /** Only start queued downloads inside a daily time window. */
+  isDownloadScheduleEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.DOWNLOAD_SCHEDULE_ENABLED, false);
+  }
+
+  setDownloadScheduleEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.DOWNLOAD_SCHEDULE_ENABLED, enabled);
+  }
+
+  /** Window start and end as minutes after midnight (default 01:00-07:00). */
+  getDownloadScheduleWindow(): {start: number; end: number} {
+    const read = (key: SettingsKeys, fallback: number) => {
+      const value = mainStorage.getNumber(key);
+      return typeof value === 'number' && value >= 0 && value < 1440
+        ? Math.round(value)
+        : fallback;
+    };
+    return {
+      start: read(SettingsKeys.DOWNLOAD_SCHEDULE_START, 60),
+      end: read(SettingsKeys.DOWNLOAD_SCHEDULE_END, 420),
+    };
+  }
+
+  setDownloadScheduleWindow(start: number, end: number): void {
+    const clamp = (value: number) =>
+      Math.min(Math.max(Math.round(value), 0), 1439);
+    mainStorage.setNumber(SettingsKeys.DOWNLOAD_SCHEDULE_START, clamp(start));
+    mainStorage.setNumber(SettingsKeys.DOWNLOAD_SCHEDULE_END, clamp(end));
+  }
+
+  /**
+   * Parts of one file downloaded at the same time (1 turns it off). Servers
+   * that do not allow it are downloaded on one connection anyway.
+   */
+  getDownloadConnections(): number {
+    const value = mainStorage.getNumber(SettingsKeys.DOWNLOAD_CONNECTIONS);
+    return typeof value === 'number' && [1, 2, 4, 8, 16].includes(value)
+      ? value
+      : 8;
+  }
+
+  setDownloadConnections(connections: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.DOWNLOAD_CONNECTIONS,
+      [1, 2, 4, 8, 16].includes(connections) ? connections : 8,
+    );
+  }
+
+  /** Free space to keep. New downloads wait while the device is below it. */
+  getDownloadMinFreeMb(): number {
+    const value = mainStorage.getNumber(SettingsKeys.DOWNLOAD_MIN_FREE_MB);
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? Math.round(value)
+      : 1024;
+  }
+
+  setDownloadMinFreeMb(megabytes: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.DOWNLOAD_MIN_FREE_MB,
+      Math.max(Math.round(megabytes), 0),
+    );
+  }
+
+  /** Download a subtitle together with each video, when the stream has one. */
+  isDownloadSubtitlesEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.DOWNLOAD_SUBTITLES, true);
+  }
+
+  setDownloadSubtitlesEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.DOWNLOAD_SUBTITLES, enabled);
+  }
+
+  /** Language code of the subtitle to prefer (default English). */
+  getDownloadSubtitleLanguage(): string {
+    return mainStorage.getString(SettingsKeys.DOWNLOAD_SUBTITLE_LANGUAGE) || 'en';
+  }
+
+  setDownloadSubtitleLanguage(code: string): void {
+    mainStorage.setString(SettingsKeys.DOWNLOAD_SUBTITLE_LANGUAGE, code);
+  }
+
+  /** Delete watched downloads on its own when free space runs low. */
+  isDownloadAutoCleanWatched(): boolean {
+    return mainStorage.getBool(SettingsKeys.DOWNLOAD_AUTO_CLEAN_WATCHED, false);
+  }
+
+  setDownloadAutoCleanWatched(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.DOWNLOAD_AUTO_CLEAN_WATCHED, enabled);
+  }
+
+  // Subtitle settings
+  getSubtitleFontSize(): number {
+    return mainStorage.getNumber(SettingsKeys.SUBTITLE_FONT_SIZE) ?? 16;
+  }
+
+  setSubtitleFontSize(size: number): void {
+    mainStorage.setNumber(SettingsKeys.SUBTITLE_FONT_SIZE, size);
+  }
+
+  getSubtitleOpacity(): number {
+    const opacityStr = mainStorage.getString(SettingsKeys.SUBTITLE_OPACITY);
+    return opacityStr !== undefined && opacityStr !== '' ? parseFloat(opacityStr) : 1;
+  }
+
+  setSubtitleOpacity(opacity: number): void {
+    mainStorage.setString(SettingsKeys.SUBTITLE_OPACITY, opacity.toString());
+  }
+
+  getSubtitleTextOpacity(): number {
+    const value = mainStorage.getNumber(SettingsKeys.SUBTITLE_TEXT_OPACITY);
+    return typeof value === 'number' && Number.isFinite(value)
+      ? Math.min(Math.max(value, 0.2), 1)
+      : 1;
+  }
+
+  setSubtitleTextOpacity(opacity: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.SUBTITLE_TEXT_OPACITY,
+      Math.min(Math.max(opacity, 0.2), 1),
+    );
+  }
+
+  getSubtitleBottomPadding(): number {
+    return mainStorage.getNumber(SettingsKeys.SUBTITLE_BOTTOM_PADDING) ?? 10;
+  }
+
+  setSubtitleBottomPadding(padding: number): void {
+    mainStorage.setNumber(SettingsKeys.SUBTITLE_BOTTOM_PADDING, padding);
+  }
+
+  getSubtitleTextColor(): string {
+    return mainStorage.getString(SettingsKeys.SUBTITLE_TEXT_COLOR) || '#FFFFFF';
+  }
+
+  setSubtitleTextColor(color: string): void {
+    mainStorage.setString(SettingsKeys.SUBTITLE_TEXT_COLOR, color);
+  }
+
+  getSubtitleFontFamily(): string {
+    return mainStorage.getString(SettingsKeys.SUBTITLE_FONT_FAMILY) || 'default';
+  }
+
+  setSubtitleFontFamily(font: string): void {
+    mainStorage.setString(SettingsKeys.SUBTITLE_FONT_FAMILY, font);
+  }
+
+  getSubtitleEdgeType(): 'outline' | 'dropShadow' | 'raised' | 'depressed' | 'none' {
+    const val = mainStorage.getString(SettingsKeys.SUBTITLE_EDGE_TYPE);
+    if (
+      val === 'dropShadow' ||
+      val === 'raised' ||
+      val === 'depressed' ||
+      val === 'none'
+    ) {
+      return val;
+    }
+    return 'outline';
+  }
+
+  setSubtitleEdgeType(
+    edgeType: 'outline' | 'dropShadow' | 'raised' | 'depressed' | 'none',
+  ): void {
+    mainStorage.setString(SettingsKeys.SUBTITLE_EDGE_TYPE, edgeType);
+  }
+
+  getSubtitleEdgeColor(): string {
+    return mainStorage.getString(SettingsKeys.SUBTITLE_EDGE_COLOR) || '#000000';
+  }
+
+  setSubtitleEdgeColor(color: string): void {
+    mainStorage.setString(SettingsKeys.SUBTITLE_EDGE_COLOR, color);
+  }
+
+  getSubtitleOutlineWidth(): number {
+    return mainStorage.getNumber(SettingsKeys.SUBTITLE_OUTLINE_WIDTH) ?? 2;
+  }
+
+  setSubtitleOutlineWidth(width: number): void {
+    mainStorage.setNumber(SettingsKeys.SUBTITLE_OUTLINE_WIDTH, width);
+  }
+
+  getListViewType(): number {
+    return parseInt(
+      mainStorage.getString(SettingsKeys.LIST_VIEW_TYPE) || '1',
+      10,
+    );
+  }
+
+  setListViewType(type: number): void {
+    mainStorage.setString(SettingsKeys.LIST_VIEW_TYPE, type.toString());
+  }
+
+  // Telemetry / Privacy
+  isTelemetryOptIn(): boolean {
+    return mainStorage.getBool(SettingsKeys.TELEMETRY_OPT_IN, true);
+  }
+
+  setTelemetryOptIn(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.TELEMETRY_OPT_IN, enabled);
+  }
+
+  getTmdbApiKey(): string {
+    return mainStorage.getString(SettingsKeys.TMDB_API_KEY)?.trim() || '';
+  }
+
+  setTmdbApiKey(apiKey: string): void {
+    const normalizedKey = apiKey.trim();
+    if (normalizedKey) {
+      mainStorage.setString(SettingsKeys.TMDB_API_KEY, normalizedKey);
+    } else {
+      mainStorage.delete(SettingsKeys.TMDB_API_KEY);
+    }
+    mainStorage.setNumber(
+      SettingsKeys.TMDB_API_KEY_REVISION,
+      this.getTmdbApiKeyRevision() + 1,
+    );
+  }
+
+  getTmdbApiKeyRevision(): number {
+    return mainStorage.getNumber(SettingsKeys.TMDB_API_KEY_REVISION) || 0;
+  }
+
+  // Generic get/set methods for settings not covered by specific methods
+  getBool(key: string, defaultValue = false): boolean {
+    return mainStorage.getBool(key, defaultValue);
+  }
+
+  setBool(key: string, value: boolean): void {
+    mainStorage.setBool(key, value);
+  }
+  // DNS over HTTPS
+  isDohEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.DOH_ENABLED, true);
+  }
+
+  setDohEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.DOH_ENABLED, enabled);
+  }
+
+  getDohProvider(): string {
+    return mainStorage.getString(SettingsKeys.DOH_PROVIDER) || 'cloudflare';
+  }
+
+  setDohProvider(provider: string): void {
+    mainStorage.setString(SettingsKeys.DOH_PROVIDER, provider);
+  }
+
+  getDohCustomUrl(): string {
+    return mainStorage.getString(SettingsKeys.DOH_CUSTOM_URL) || '';
+  }
+
+  setDohCustomUrl(url: string): void {
+    mainStorage.setString(SettingsKeys.DOH_CUSTOM_URL, url);
+  }
+
+  // Cloudflare WARP
+  isWarpEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.WARP_ENABLED, false);
+  }
+
+  setWarpEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.WARP_ENABLED, enabled);
+  }
+
+  // ByeDPI Anti-DPI
+  isByeDpiEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.BYEDPI_ENABLED, true);
+  }
+
+  setByeDpiEnabled(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.BYEDPI_ENABLED, enabled);
+  }
+
+  getByeDpiCmdArgs(): string {
+    return mainStorage.getString(SettingsKeys.BYEDPI_CMD_ARGS) || '';
+  }
+
+  setByeDpiCmdArgs(args: string): void {
+    mainStorage.setString(SettingsKeys.BYEDPI_CMD_ARGS, args);
+  }
+
+  // Webview
+  isSkipInAppWebview(): boolean {
+    return mainStorage.getBool(SettingsKeys.SKIP_IN_APP_WEBVIEW, false);
+  }
+
+  setSkipInAppWebview(skip: boolean): void {
+    mainStorage.setBool(SettingsKeys.SKIP_IN_APP_WEBVIEW, skip);
+  }
+}
+
+// Export a singleton instance
+export const settingsStorage = new SettingsStorage();

@@ -1,0 +1,2178 @@
+diff --git a/node_modules/react-native-video/android/build.gradle b/node_modules/react-native-video/android/build.gradle
+index 748b799..b4afeae 100644
+--- a/node_modules/react-native-video/android/build.gradle
++++ b/node_modules/react-native-video/android/build.gradle
+@@ -238,6 +238,7 @@ dependencies {
+         implementation(project(":media-lib-exoplayer"))
+     } else {
+         implementation "androidx.media3:media3-exoplayer:$media3_version"
++        implementation "org.jellyfin.media3:media3-ffmpeg-decoder:${media3_version}+1"
+     }
+ 
+     if (ExoplayerDependencies["useExoplayerSmoothStreaming"]) {
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/BufferConfig.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/BufferConfig.kt
+index 17f54c6..f87fdbb 100644
+--- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/BufferConfig.kt
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/BufferConfig.kt
+@@ -17,6 +17,8 @@ class BufferConfig {
+     var bufferForPlaybackMs = BufferConfigPropUnsetInt
+     var bufferForPlaybackAfterRebufferMs = BufferConfigPropUnsetInt
+     var backBufferDurationMs = BufferConfigPropUnsetInt
++    var forwardBufferMB = BufferConfigPropUnsetInt
++    var backBufferMB = BufferConfigPropUnsetInt
+     var maxHeapAllocationPercent = BufferConfigPropUnsetDouble
+     var minBackBufferMemoryReservePercent = BufferConfigPropUnsetDouble
+     var minBufferMemoryReservePercent = BufferConfigPropUnsetDouble
+@@ -34,6 +36,8 @@ class BufferConfig {
+                 bufferForPlaybackMs == other.bufferForPlaybackMs &&
+                 bufferForPlaybackAfterRebufferMs == other.bufferForPlaybackAfterRebufferMs &&
+                 backBufferDurationMs == other.backBufferDurationMs &&
++                forwardBufferMB == other.forwardBufferMB &&
++                backBufferMB == other.backBufferMB &&
+                 maxHeapAllocationPercent == other.maxHeapAllocationPercent &&
+                 minBackBufferMemoryReservePercent == other.minBackBufferMemoryReservePercent &&
+                 minBufferMemoryReservePercent == other.minBufferMemoryReservePercent &&
+@@ -93,6 +97,8 @@ class BufferConfig {
+         private const val PROP_BUFFER_CONFIG_MIN_BACK_BUFFER_MEMORY_RESERVE_PERCENT = "minBackBufferMemoryReservePercent"
+         private const val PROP_BUFFER_CONFIG_MIN_BUFFER_MEMORY_RESERVE_PERCENT = "minBufferMemoryReservePercent"
+         private const val PROP_BUFFER_CONFIG_BACK_BUFFER_DURATION_MS = "backBufferDurationMs"
++        private const val PROP_BUFFER_CONFIG_FORWARD_BUFFER_MB = "forwardBufferMB"
++        private const val PROP_BUFFER_CONFIG_BACK_BUFFER_MB = "backBufferMB"
+         private const val PROP_BUFFER_CONFIG_INITIAL_BITRATE = "initialBitrate"
+         private const val PROP_BUFFER_CONFIG_LIVE = "live"
+ 
+@@ -121,6 +127,8 @@ class BufferConfig {
+                         BufferConfigPropUnsetDouble
+                     )
+                 bufferConfig.backBufferDurationMs = safeGetInt(src, PROP_BUFFER_CONFIG_BACK_BUFFER_DURATION_MS, BufferConfigPropUnsetInt)
++                bufferConfig.forwardBufferMB = safeGetInt(src, PROP_BUFFER_CONFIG_FORWARD_BUFFER_MB, BufferConfigPropUnsetInt)
++                bufferConfig.backBufferMB = safeGetInt(src, PROP_BUFFER_CONFIG_BACK_BUFFER_MB, BufferConfigPropUnsetInt)
+                 bufferConfig.initialBitrate = safeGetInt(src, PROP_BUFFER_CONFIG_INITIAL_BITRATE, BufferConfigPropUnsetInt)
+                 bufferConfig.live = Live.parse(src.getMap(PROP_BUFFER_CONFIG_LIVE))
+             }
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/SubtitleStyle.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/SubtitleStyle.kt
+index 1ac0fd0..6540a53 100644
+--- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/SubtitleStyle.kt
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/SubtitleStyle.kt
+@@ -21,6 +21,16 @@ class SubtitleStyle public constructor() {
+         private set
+     var subtitlesFollowVideo = true
+         private set
++    var textColor: String? = null
++        private set
++    var fontFamily: String? = null
++        private set
++    var edgeType: String? = null
++        private set
++    var edgeColor: String? = null
++        private set
++    var outlineWidth = 2
++        private set
+ 
+     companion object {
+         private const val PROP_FONT_SIZE_TRACK = "fontSize"
+@@ -30,6 +40,11 @@ class SubtitleStyle public constructor() {
+         private const val PROP_PADDING_RIGHT = "paddingRight"
+         private const val PROP_OPACITY = "opacity"
+         private const val PROP_SUBTITLES_FOLLOW_VIDEO = "subtitlesFollowVideo"
++        private const val PROP_TEXT_COLOR = "textColor"
++        private const val PROP_FONT_FAMILY = "fontFamily"
++        private const val PROP_EDGE_TYPE = "edgeType"
++        private const val PROP_EDGE_COLOR = "edgeColor"
++        private const val PROP_OUTLINE_WIDTH = "outlineWidth"
+ 
+         @JvmStatic
+         fun parse(src: ReadableMap?): SubtitleStyle {
+@@ -41,6 +56,11 @@ class SubtitleStyle public constructor() {
+             subtitleStyle.paddingRight = ReactBridgeUtils.safeGetInt(src, PROP_PADDING_RIGHT, 0)
+             subtitleStyle.opacity = ReactBridgeUtils.safeGetFloat(src, PROP_OPACITY, 1f)
+             subtitleStyle.subtitlesFollowVideo = ReactBridgeUtils.safeGetBool(src, PROP_SUBTITLES_FOLLOW_VIDEO, true)
++            subtitleStyle.textColor = ReactBridgeUtils.safeGetString(src, PROP_TEXT_COLOR, null)
++            subtitleStyle.fontFamily = ReactBridgeUtils.safeGetString(src, PROP_FONT_FAMILY, null)
++            subtitleStyle.edgeType = ReactBridgeUtils.safeGetString(src, PROP_EDGE_TYPE, null)
++            subtitleStyle.edgeColor = ReactBridgeUtils.safeGetString(src, PROP_EDGE_COLOR, null)
++            subtitleStyle.outlineWidth = ReactBridgeUtils.safeGetInt(src, PROP_OUTLINE_WIDTH, 2)
+             return subtitleStyle
+         }
+     }
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ChainedMatroskaDataSource.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ChainedMatroskaDataSource.java
+new file mode 100644
+index 0000000..f3a530a
+--- /dev/null
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ChainedMatroskaDataSource.java
+@@ -0,0 +1,385 @@
++package com.brentvatne.exoplayer;
++
++import android.net.Uri;
++
++import androidx.annotation.Nullable;
++import androidx.media3.common.C;
++import androidx.media3.datasource.DataSource;
++import androidx.media3.datasource.DataSpec;
++import androidx.media3.datasource.TransferListener;
++
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Makes Matroska files with a chained SeekHead seekable by Media3.
++ *
++ * <p>Media3 follows a Cues entry from the first SeekHead, but it does not follow a SeekHead entry
++ * that points to a second SeekHead. Some versions of mkvmerge write the Cues entry only in that
++ * second SeekHead. This wrapper discovers the chained entry with two small range reads and
++ * rewrites the bytes exposed to Media3 so the first entry points directly to Cues. The source file
++ * and remote response are never modified.
++ */
++final class ChainedMatroskaDataSource implements DataSource {
++    private static final int PROBE_LENGTH = 128 * 1024;
++    private static final int SEEK_ENTRY_SCAN_LENGTH = 96;
++
++    private static final byte[] SEGMENT_ID = bytes(0x18, 0x53, 0x80, 0x67);
++    private static final byte[] SEEK_ID_FOR_SEEK_HEAD =
++            bytes(0x53, 0xAB, 0x84, 0x11, 0x4D, 0x9B, 0x74);
++    private static final byte[] SEEK_ID_FOR_CUES =
++            bytes(0x53, 0xAB, 0x84, 0x1C, 0x53, 0xBB, 0x6B);
++    private static final byte[] SEEK_POSITION_ID = bytes(0x53, 0xAC);
++    private static final byte[] CUES_ID = bytes(0x1C, 0x53, 0xBB, 0x6B);
++
++    private static final Patch NO_PATCH = new Patch(-1, null, -1, null);
++    private static final Map<String, Patch> PATCH_CACHE = new ConcurrentHashMap<>();
++
++    private final DataSource.Factory upstreamFactory;
++    private final DataSource upstream;
++
++    private Patch patch = NO_PATCH;
++    private long readPosition;
++
++    private ChainedMatroskaDataSource(DataSource.Factory upstreamFactory) {
++        this.upstreamFactory = upstreamFactory;
++        this.upstream = upstreamFactory.createDataSource();
++    }
++
++    @Override
++    public void addTransferListener(TransferListener transferListener) {
++        upstream.addTransferListener(transferListener);
++    }
++
++    @Override
++    public long open(DataSpec dataSpec) throws IOException {
++        readPosition = dataSpec.position;
++        patch = isMatroska(dataSpec.uri) ? getPatch(dataSpec) : NO_PATCH;
++        return upstream.open(dataSpec);
++    }
++
++    @Override
++    public int read(byte[] buffer, int offset, int length) throws IOException {
++        int bytesRead = upstream.read(buffer, offset, length);
++        if (bytesRead == C.RESULT_END_OF_INPUT) {
++            return bytesRead;
++        }
++
++        applyPatch(buffer, offset, bytesRead, readPosition, patch.seekIdOffset, patch.seekIdBytes);
++        applyPatch(
++                buffer,
++                offset,
++                bytesRead,
++                readPosition,
++                patch.seekPositionOffset,
++                patch.seekPositionBytes);
++        readPosition += bytesRead;
++        return bytesRead;
++    }
++
++    @Nullable
++    @Override
++    public Uri getUri() {
++        return upstream.getUri();
++    }
++
++    @Override
++    public Map<String, List<String>> getResponseHeaders() {
++        return upstream.getResponseHeaders();
++    }
++
++    @Override
++    public void close() throws IOException {
++        try {
++            upstream.close();
++        } finally {
++            patch = NO_PATCH;
++            readPosition = 0;
++        }
++    }
++
++    private Patch getPatch(DataSpec sourceSpec) {
++        String cacheKey = sourceSpec.uri.toString();
++        Patch cached = PATCH_CACHE.get(cacheKey);
++        if (cached != null) {
++            return cached;
++        }
++
++        Patch discovered;
++        try {
++            discovered = discoverPatch(sourceSpec);
++        } catch (Exception ignored) {
++            discovered = NO_PATCH;
++        }
++        PATCH_CACHE.put(cacheKey, discovered);
++        return discovered;
++    }
++
++    private Patch discoverPatch(DataSpec sourceSpec) throws IOException {
++        byte[] header = readRange(sourceSpec, 0, PROBE_LENGTH);
++        int segmentIdOffset = indexOf(header, SEGMENT_ID, 0, header.length);
++        if (segmentIdOffset < 0) {
++            return NO_PATCH;
++        }
++
++        int segmentSizeOffset = segmentIdOffset + SEGMENT_ID.length;
++        int segmentSizeLength = vintLength(header, segmentSizeOffset);
++        if (segmentSizeLength < 1) {
++            return NO_PATCH;
++        }
++        long segmentContentOffset = segmentSizeOffset + segmentSizeLength;
++
++        int chainedSeekIdOffset = indexOf(header, SEEK_ID_FOR_SEEK_HEAD, 0, header.length);
++        if (chainedSeekIdOffset < 0) {
++            return NO_PATCH;
++        }
++
++        UnsignedElement chainedPosition = findUnsignedElement(
++                header,
++                chainedSeekIdOffset + SEEK_ID_FOR_SEEK_HEAD.length,
++                Math.min(header.length, chainedSeekIdOffset + SEEK_ENTRY_SCAN_LENGTH),
++                SEEK_POSITION_ID);
++        if (chainedPosition == null) {
++            return NO_PATCH;
++        }
++
++        long chainedSeekHeadOffset = segmentContentOffset + chainedPosition.value;
++        byte[] chainedSeekHead = readRange(sourceSpec, chainedSeekHeadOffset, PROBE_LENGTH);
++        int cuesSeekIdOffset = indexOf(
++                chainedSeekHead,
++                SEEK_ID_FOR_CUES,
++                0,
++                chainedSeekHead.length);
++        if (cuesSeekIdOffset < 0) {
++            return NO_PATCH;
++        }
++
++        UnsignedElement cuesPosition = findUnsignedElement(
++                chainedSeekHead,
++                cuesSeekIdOffset + SEEK_ID_FOR_CUES.length,
++                Math.min(chainedSeekHead.length, cuesSeekIdOffset + SEEK_ENTRY_SCAN_LENGTH),
++                SEEK_POSITION_ID);
++        if (cuesPosition == null || !fitsUnsigned(cuesPosition.value, chainedPosition.payloadLength)) {
++            return NO_PATCH;
++        }
++
++        long seekIdPayloadOffset = chainedSeekIdOffset + 3L;
++        return new Patch(
++                seekIdPayloadOffset,
++                CUES_ID,
++                chainedPosition.payloadOffset,
++                encodeUnsigned(cuesPosition.value, chainedPosition.payloadLength));
++    }
++
++    private byte[] readRange(DataSpec sourceSpec, long position, int requestedLength)
++            throws IOException {
++        DataSource probe = upstreamFactory.createDataSource();
++        ByteArrayOutputStream output = new ByteArrayOutputStream(requestedLength);
++        try {
++            DataSpec probeSpec = sourceSpec.buildUpon()
++                    .setPosition(position)
++                    .setLength(requestedLength)
++                    .build();
++            probe.open(probeSpec);
++            byte[] chunk = new byte[8192];
++            int remaining = requestedLength;
++            while (remaining > 0) {
++                int count = probe.read(chunk, 0, Math.min(chunk.length, remaining));
++                if (count == C.RESULT_END_OF_INPUT) {
++                    break;
++                }
++                output.write(chunk, 0, count);
++                remaining -= count;
++            }
++        } finally {
++            probe.close();
++        }
++        return output.toByteArray();
++    }
++
++    @Nullable
++    private static UnsignedElement findUnsignedElement(
++            byte[] data,
++            int start,
++            int end,
++            byte[] elementId) {
++        int idOffset = indexOf(data, elementId, start, end);
++        if (idOffset < 0) {
++            return null;
++        }
++
++        int sizeOffset = idOffset + elementId.length;
++        int sizeLength = vintLength(data, sizeOffset);
++        if (sizeLength < 1) {
++            return null;
++        }
++        long payloadLengthValue = decodeVint(data, sizeOffset, sizeLength, true);
++        if (payloadLengthValue < 1 || payloadLengthValue > 8) {
++            return null;
++        }
++
++        int payloadLength = (int) payloadLengthValue;
++        int payloadOffset = sizeOffset + sizeLength;
++        if (payloadOffset + payloadLength > data.length) {
++            return null;
++        }
++        return new UnsignedElement(
++                payloadOffset,
++                payloadLength,
++                decodeUnsigned(data, payloadOffset, payloadLength));
++    }
++
++    private static int vintLength(byte[] data, int offset) {
++        if (offset < 0 || offset >= data.length || data[offset] == 0) {
++            return -1;
++        }
++        int mask = 0x80;
++        for (int length = 1; length <= 8; length++) {
++            if ((data[offset] & mask) != 0) {
++                return offset + length <= data.length ? length : -1;
++            }
++            mask >>>= 1;
++        }
++        return -1;
++    }
++
++    private static long decodeVint(byte[] data, int offset, int length, boolean removeLengthMask) {
++        long value = data[offset] & 0xFFL;
++        if (removeLengthMask) {
++            value &= ~(0x80L >>> (length - 1));
++        }
++        for (int i = 1; i < length; i++) {
++            value = (value << 8) | (data[offset + i] & 0xFFL);
++        }
++        return value;
++    }
++
++    private static long decodeUnsigned(byte[] data, int offset, int length) {
++        long value = 0;
++        for (int i = 0; i < length; i++) {
++            value = (value << 8) | (data[offset + i] & 0xFFL);
++        }
++        return value;
++    }
++
++    private static boolean fitsUnsigned(long value, int byteCount) {
++        if (value < 0 || byteCount < 1 || byteCount > 8) {
++            return false;
++        }
++        return byteCount == 8 || value < (1L << (byteCount * 8));
++    }
++
++    private static byte[] encodeUnsigned(long value, int byteCount) {
++        byte[] result = new byte[byteCount];
++        for (int i = byteCount - 1; i >= 0; i--) {
++            result[i] = (byte) (value & 0xFF);
++            value >>>= 8;
++        }
++        return result;
++    }
++
++    private static void applyPatch(
++            byte[] buffer,
++            int bufferOffset,
++            int bytesRead,
++            long absoluteReadOffset,
++            long patchOffset,
++            @Nullable byte[] replacement) {
++        if (patchOffset < 0 || replacement == null || replacement.length == 0) {
++            return;
++        }
++
++        long readEnd = absoluteReadOffset + bytesRead;
++        long patchEnd = patchOffset + replacement.length;
++        long overlapStart = Math.max(absoluteReadOffset, patchOffset);
++        long overlapEnd = Math.min(readEnd, patchEnd);
++        if (overlapStart >= overlapEnd) {
++            return;
++        }
++
++        int sourceOffset = (int) (overlapStart - patchOffset);
++        int destinationOffset = bufferOffset + (int) (overlapStart - absoluteReadOffset);
++        int count = (int) (overlapEnd - overlapStart);
++        System.arraycopy(replacement, sourceOffset, buffer, destinationOffset, count);
++    }
++
++    private static int indexOf(byte[] data, byte[] pattern, int start, int end) {
++        int lastStart = Math.min(end, data.length) - pattern.length;
++        for (int i = Math.max(0, start); i <= lastStart; i++) {
++            boolean matches = true;
++            for (int j = 0; j < pattern.length; j++) {
++                if (data[i + j] != pattern[j]) {
++                    matches = false;
++                    break;
++                }
++            }
++            if (matches) {
++                return i;
++            }
++        }
++        return -1;
++    }
++
++    private static boolean isMatroska(Uri uri) {
++        String path = uri.getPath();
++        return path != null && path.toLowerCase(Locale.US).endsWith(".mkv");
++    }
++
++    private static byte[] bytes(int... values) {
++        byte[] result = new byte[values.length];
++        for (int i = 0; i < values.length; i++) {
++            result[i] = (byte) values[i];
++        }
++        return result;
++    }
++
++    static final class Factory implements DataSource.Factory {
++        private final DataSource.Factory upstreamFactory;
++
++        Factory(DataSource.Factory upstreamFactory) {
++            this.upstreamFactory = upstreamFactory;
++        }
++
++        @Override
++        public DataSource createDataSource() {
++            return new ChainedMatroskaDataSource(upstreamFactory);
++        }
++    }
++
++    private static final class UnsignedElement {
++        final long payloadOffset;
++        final int payloadLength;
++        final long value;
++
++        UnsignedElement(long payloadOffset, int payloadLength, long value) {
++            this.payloadOffset = payloadOffset;
++            this.payloadLength = payloadLength;
++            this.value = value;
++        }
++    }
++
++    private static final class Patch {
++        final long seekIdOffset;
++        @Nullable final byte[] seekIdBytes;
++        final long seekPositionOffset;
++        @Nullable final byte[] seekPositionBytes;
++
++        Patch(
++                long seekIdOffset,
++                @Nullable byte[] seekIdBytes,
++                long seekPositionOffset,
++                @Nullable byte[] seekPositionBytes) {
++            this.seekIdOffset = seekIdOffset;
++            this.seekIdBytes = seekIdBytes == null ? null : Arrays.copyOf(seekIdBytes, seekIdBytes.length);
++            this.seekPositionOffset = seekPositionOffset;
++            this.seekPositionBytes = seekPositionBytes == null
++                    ? null
++                    : Arrays.copyOf(seekPositionBytes, seekPositionBytes.length);
++        }
++    }
++}
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/CustomSubtitleOverlayView.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/CustomSubtitleOverlayView.kt
+new file mode 100644
+index 0000000..2451a2d
+--- /dev/null
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/CustomSubtitleOverlayView.kt
+@@ -0,0 +1,327 @@
++package com.brentvatne.exoplayer
++
++import android.content.Context
++import android.graphics.Bitmap
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.Paint
++import android.graphics.RectF
++import android.graphics.Typeface
++import android.os.Build
++import android.text.Layout
++import android.text.SpannableStringBuilder
++import android.text.Spanned
++import android.text.StaticLayout
++import android.text.TextPaint
++import android.text.style.BackgroundColorSpan
++import android.text.style.ForegroundColorSpan
++import android.util.AttributeSet
++import android.util.TypedValue
++import android.view.View
++import android.view.ViewGroup
++import androidx.media3.common.text.Cue
++import com.brentvatne.common.api.SubtitleStyle
++
++class CustomSubtitleOverlayView @JvmOverloads constructor(
++    context: Context,
++    attrs: AttributeSet? = null,
++    defStyleAttr: Int = 0
++) : View(context, attrs, defStyleAttr) {
++
++    private var cues: List<Cue> = emptyList()
++    private var style = SubtitleStyle()
++
++    private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
++        isSubpixelText = true
++    }
++    private val strokePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
++        isSubpixelText = true
++        style = Paint.Style.STROKE
++        strokeJoin = Paint.Join.ROUND
++        strokeCap = Paint.Cap.ROUND
++    }
++    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
++    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
++
++    fun setCues(newCues: List<Cue>) {
++        this.cues = newCues
++        postInvalidate()
++    }
++
++    fun setStyle(newStyle: SubtitleStyle) {
++        this.style = newStyle
++        postInvalidate()
++    }
++
++    private fun createEdgeText(source: CharSequence): CharSequence {
++        if (source !is Spanned) return source
++        val spannable = SpannableStringBuilder(source)
++        val fgSpans = spannable.getSpans(0, spannable.length, ForegroundColorSpan::class.java)
++        for (span in fgSpans) {
++            spannable.removeSpan(span)
++        }
++        val bgSpans = spannable.getSpans(0, spannable.length, BackgroundColorSpan::class.java)
++        for (span in bgSpans) {
++            spannable.removeSpan(span)
++        }
++        return spannable
++    }
++
++    private fun cleanCueText(source: CharSequence): CharSequence {
++        if (source !is Spanned) return source
++        val spannable = SpannableStringBuilder(source)
++        val bgSpans = spannable.getSpans(0, spannable.length, BackgroundColorSpan::class.java)
++        for (span in bgSpans) {
++            spannable.removeSpan(span)
++        }
++        return spannable
++    }
++
++    private fun buildLayout(
++        text: CharSequence,
++        paint: TextPaint,
++        width: Int,
++        alignment: Layout.Alignment
++    ): StaticLayout =
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
++            StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
++                .setAlignment(alignment)
++                .setLineSpacing(0f, 1.15f)
++                .setIncludePad(false)
++                .build()
++        } else {
++            @Suppress("DEPRECATION")
++            StaticLayout(text, paint, width, alignment, 1.15f, 0f, false)
++        }
++
++    private fun drawBitmapCue(
++        canvas: Canvas,
++        cue: Cue,
++        bitmap: Bitmap,
++        frameLeft: Float,
++        frameTop: Float,
++        frameWidth: Float,
++        frameHeight: Float
++    ) {
++        val width = if (cue.size != Cue.DIMEN_UNSET) cue.size * frameWidth
++            else bitmap.width.toFloat()
++        val height = if (cue.bitmapHeight != Cue.DIMEN_UNSET) cue.bitmapHeight * frameHeight
++            else width * bitmap.height / maxOf(1, bitmap.width)
++        val anchorX = frameLeft + (if (cue.position != Cue.DIMEN_UNSET) cue.position else 0.5f) * frameWidth
++        val anchorY = frameTop + (if (cue.line != Cue.DIMEN_UNSET) cue.line else 0.9f) * frameHeight
++        val left = when (cue.positionAnchor) {
++            Cue.ANCHOR_TYPE_START -> anchorX
++            Cue.ANCHOR_TYPE_END -> anchorX - width
++            else -> anchorX - width / 2f
++        }
++        val top = when (cue.lineAnchor) {
++            Cue.ANCHOR_TYPE_START -> anchorY
++            Cue.ANCHOR_TYPE_MIDDLE -> anchorY - height / 2f
++            else -> anchorY - height
++        }
++        canvas.drawBitmap(bitmap, null, RectF(left, top, left + width, top + height), bitmapPaint)
++    }
++
++    override fun onDraw(canvas: Canvas) {
++        super.onDraw(canvas)
++        if (cues.isEmpty()) return
++
++        val density = resources.displayMetrics.density
++        val fontSizeSp = if (style.fontSize > 0) style.fontSize.toFloat() else 16f
++        val textSizePx = TypedValue.applyDimension(
++            TypedValue.COMPLEX_UNIT_SP,
++            fontSizeSp,
++            resources.displayMetrics
++        )
++
++        val typeface = when (style.fontFamily) {
++            "sans-serif" -> Typeface.SANS_SERIF
++            "serif" -> Typeface.SERIF
++            "monospace" -> Typeface.MONOSPACE
++            "casual" -> Typeface.create("casual", Typeface.NORMAL)
++            "cursive" -> Typeface.create("cursive", Typeface.NORMAL)
++            else -> Typeface.DEFAULT
++        }
++
++        textPaint.typeface = typeface
++        textPaint.textSize = textSizePx
++
++        strokePaint.typeface = typeface
++        strokePaint.textSize = textSizePx
++
++        val fgColor = try {
++            if (!style.textColor.isNullOrEmpty()) Color.parseColor(style.textColor) else Color.WHITE
++        } catch (e: Exception) {
++            Color.WHITE
++        }
++
++        val edColor = try {
++            if (!style.edgeColor.isNullOrEmpty()) Color.parseColor(style.edgeColor) else Color.BLACK
++        } catch (e: Exception) {
++            Color.BLACK
++        }
++
++        val bgAlpha = if (style.opacity in 0.0f..1.0f) (style.opacity * 255).toInt() else 0
++        val edgeType = style.edgeType ?: "outline"
++        val outlineWidthPx = style.outlineWidth.toFloat() * density
++        val bottomPaddingPx = style.paddingBottom.toFloat() * density
++
++        val contentFrame = (parent as? ViewGroup)?.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
++        val hasFrame = contentFrame != null && contentFrame.width > 0 && contentFrame.height > 0
++        val followVideo = style.subtitlesFollowVideo && hasFrame
++        val videoLeft = if (followVideo) contentFrame!!.left.toFloat() else 0f
++        val videoTop = if (followVideo) contentFrame!!.top.toFloat() else 0f
++        val videoWidth = if (followVideo) contentFrame!!.width.toFloat() else width.toFloat()
++        val videoHeight = if (followVideo) contentFrame!!.height.toFloat() else height.toFloat()
++        val videoBottom = if (followVideo) videoTop + videoHeight else height.toFloat()
++
++        if (videoWidth <= 0 || videoHeight <= 0) return
++
++        // Positioned cues (ASS \pos and \an, WebVTT line and position) are
++        // placed within the picture, as VLC does, even when unpositioned text
++        // uses the whole view.
++        val frameLeft = if (hasFrame) contentFrame!!.left.toFloat() else videoLeft
++        val frameTop = if (hasFrame) contentFrame!!.top.toFloat() else videoTop
++        val frameWidth = if (hasFrame) contentFrame!!.width.toFloat() else videoWidth
++        val frameHeight = if (hasFrame) contentFrame!!.height.toFloat() else videoHeight
++
++        val maxTextWidth = (videoWidth - (48 * density)).toInt().coerceAtLeast(10)
++        val padH = 12f * density
++        val padV = 5f * density
++        val gap = 2f * density
++        val lowestBottom = videoBottom - bottomPaddingPx - (4f * density)
++
++        val placed = ArrayList<RectF>()
++
++        for (cue in cues) {
++            // Image subtitles (PGS, VobSub, DVB) carry a bitmap placed as a
++            // fraction of the picture, with no text.
++            val bitmap = cue.bitmap
++            if (bitmap != null) {
++                drawBitmapCue(canvas, cue, bitmap, frameLeft, frameTop, frameWidth, frameHeight)
++                continue
++            }
++            val rawText = cue.text ?: continue
++            if (rawText.isEmpty()) continue
++
++            val text = cleanCueText(rawText)
++            val edgeText = createEdgeText(rawText)
++            val alignment = cue.textAlignment ?: Layout.Alignment.ALIGN_CENTER
++            val layoutWidth = if (cue.size != Cue.DIMEN_UNSET && cue.size > 0f) {
++                (cue.size * frameWidth).toInt().coerceIn(10, maxTextWidth)
++            } else {
++                maxTextWidth
++            }
++
++            textPaint.style = Paint.Style.FILL
++            textPaint.color = fgColor
++            textPaint.clearShadowLayer()
++            val staticLayout = buildLayout(text, textPaint, layoutWidth, alignment)
++
++            var minLineLeft = Float.MAX_VALUE
++            var maxLineRight = -Float.MAX_VALUE
++            for (i in 0 until staticLayout.lineCount) {
++                minLineLeft = minOf(minLineLeft, staticLayout.getLineLeft(i))
++                maxLineRight = maxOf(maxLineRight, staticLayout.getLineRight(i))
++            }
++            if (minLineLeft > maxLineRight) {
++                minLineLeft = 0f
++                maxLineRight = staticLayout.width.toFloat()
++            }
++            val boxWidth = (maxLineRight - minLineLeft) + padH * 2
++            val boxHeight = staticLayout.height.toFloat() + padV * 2
++
++            // Horizontal: the cue position and its anchor, else centred.
++            var boxLeft = if (cue.position != Cue.DIMEN_UNSET) {
++                val anchorX = frameLeft + cue.position * frameWidth
++                when (cue.positionAnchor) {
++                    Cue.ANCHOR_TYPE_START -> anchorX
++                    Cue.ANCHOR_TYPE_END -> anchorX - boxWidth
++                    else -> anchorX - boxWidth / 2f
++                }
++            } else {
++                videoLeft + (videoWidth - boxWidth) / 2f
++            }
++            boxLeft = boxLeft.coerceIn(
++                videoLeft,
++                maxOf(videoLeft, videoLeft + videoWidth - boxWidth)
++            )
++
++            // Vertical: the cue line and its anchor, else the bottom.
++            val lineHeight = textPaint.fontSpacing * 1.15f
++            var boxTop = when {
++                cue.line == Cue.DIMEN_UNSET -> lowestBottom - boxHeight
++                cue.lineType == Cue.LINE_TYPE_NUMBER -> {
++                    if (cue.line >= 0) frameTop + cue.line * lineHeight
++                    else frameTop + frameHeight + (cue.line + 1) * lineHeight - boxHeight
++                }
++                else -> {
++                    val anchorY = frameTop + cue.line * frameHeight
++                    when (cue.lineAnchor) {
++                        Cue.ANCHOR_TYPE_START -> anchorY
++                        Cue.ANCHOR_TYPE_MIDDLE -> anchorY - boxHeight / 2f
++                        else -> anchorY - boxHeight
++                    }
++                }
++            }
++            // Bottom text keeps the user's bottom padding.
++            boxTop = boxTop.coerceIn(videoTop, maxOf(videoTop, lowestBottom - boxHeight))
++
++            // Cues that would overlap move apart, as in VLC: text in the lower
++            // half moves up, text in the upper half moves down.
++            val movesUp = boxTop + boxHeight / 2f > videoTop + videoHeight / 2f
++            var rect = RectF(boxLeft, boxTop, boxLeft + boxWidth, boxTop + boxHeight)
++            var attempts = 0
++            while (attempts++ <= placed.size) {
++                val hit = placed.firstOrNull { RectF.intersects(it, rect) } ?: break
++                val top = if (movesUp) hit.top - gap - boxHeight else hit.bottom + gap
++                rect = RectF(rect.left, top, rect.right, top + boxHeight)
++            }
++            placed.add(rect)
++
++            val x = rect.left + padH - minLineLeft
++            val y = rect.top + padV
++
++            if (bgAlpha > 0) {
++                bgPaint.color = Color.argb(bgAlpha, 0, 0, 0)
++                canvas.drawRoundRect(rect, 8f * density, 8f * density, bgPaint)
++            }
++
++            when (edgeType) {
++                "outline" -> {
++                    if (outlineWidthPx > 0f) {
++                        strokePaint.strokeWidth = outlineWidthPx * 2f
++                        strokePaint.color = edColor
++                        val strokeLayout = buildLayout(edgeText, strokePaint, layoutWidth, alignment)
++                        canvas.save()
++                        canvas.translate(x, y)
++                        strokeLayout.draw(canvas)
++                        canvas.restore()
++                    }
++                }
++                "dropShadow" -> {
++                    val shadowOffset = outlineWidthPx * 1.5f
++                    val shadowRadius = outlineWidthPx * 2f
++                    textPaint.setShadowLayer(shadowRadius, shadowOffset, shadowOffset, edColor)
++                }
++                "raised", "depressed" -> {
++                    val offset = if (edgeType == "raised") outlineWidthPx else -outlineWidthPx
++                    val shadowPaint = TextPaint(textPaint).apply { color = edColor }
++                    val shadowLayout = buildLayout(edgeText, shadowPaint, layoutWidth, alignment)
++                    canvas.save()
++                    canvas.translate(x + offset, y + offset)
++                    shadowLayout.draw(canvas)
++                    canvas.restore()
++                }
++            }
++
++            textPaint.style = Paint.Style.FILL
++            textPaint.color = fgColor
++            canvas.save()
++            canvas.translate(x, y)
++            staticLayout.draw(canvas)
++            canvas.restore()
++            textPaint.clearShadowLayer()
++        }
++    }
++}
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/DataSourceUtil.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/DataSourceUtil.kt
+index 96a7887..7a44634 100644
+--- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/DataSourceUtil.kt
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/DataSourceUtil.kt
+@@ -30,10 +30,7 @@ object DataSourceUtil {
+ 
+     @JvmStatic
+     fun getDefaultDataSourceFactory(context: ReactContext, bandwidthMeter: DefaultBandwidthMeter?, requestHeaders: Map<String, String>?): DataSource.Factory {
+-        if (defaultDataSourceFactory == null || !requestHeaders.isNullOrEmpty()) {
+-            defaultDataSourceFactory = buildDataSourceFactory(context, bandwidthMeter, requestHeaders)
+-        }
+-        return defaultDataSourceFactory as DataSource.Factory
++        return buildDataSourceFactory(context, bandwidthMeter, requestHeaders)
+     }
+ 
+     @JvmStatic
+@@ -42,10 +39,7 @@ object DataSourceUtil {
+         bandwidthMeter: DefaultBandwidthMeter?,
+         requestHeaders: Map<String, String>?
+     ): HttpDataSource.Factory {
+-        if (defaultHttpDataSourceFactory == null || !requestHeaders.isNullOrEmpty()) {
+-            defaultHttpDataSourceFactory = buildHttpDataSourceFactory(context, bandwidthMeter, requestHeaders)
+-        }
+-        return defaultHttpDataSourceFactory as HttpDataSource.Factory
++        return buildHttpDataSourceFactory(context, bandwidthMeter, requestHeaders)
+     }
+ 
+     private fun buildDataSourceFactory(
+@@ -59,16 +53,19 @@ object DataSourceUtil {
+         bandwidthMeter: DefaultBandwidthMeter?,
+         requestHeaders: Map<String, String>?
+     ): HttpDataSource.Factory {
+-        val client = OkHttpClientProvider.getOkHttpClient()
+-        val container = client.cookieJar as CookieJarContainer
+-        val handler = ForwardingCookieHandler(context)
+-        container.setCookieJar(JavaNetCookieJar(handler))
++        val client = OkHttpClientProvider.getOkHttpClient().newBuilder()
++            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
++            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
++            .build()
+         val okHttpDataSourceFactory = OkHttpDataSource.Factory(client as Call.Factory)
+             .setTransferListener(bandwidthMeter)
+ 
+         if (requestHeaders != null) {
+             okHttpDataSourceFactory.setDefaultRequestProperties(requestHeaders)
+-            if (!requestHeaders.containsKey("User-Agent")) {
++            val customUserAgent = requestHeaders.entries.find { it.key.equals("User-Agent", ignoreCase = true) }?.value
++            if (customUserAgent != null) {
++                okHttpDataSourceFactory.setUserAgent(customUserAgent)
++            } else {
+                 okHttpDataSourceFactory.setUserAgent(getUserAgent(context))
+             }
+         } else {
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt
+index bb945fe..2a9f5e7 100644
+--- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ExoPlayerView.kt
+@@ -6,10 +6,13 @@ import android.graphics.drawable.GradientDrawable
+ import android.util.AttributeSet
+ import android.view.View
+ import android.view.View.MeasureSpec
++import android.view.ViewGroup
+ import android.widget.FrameLayout
+ import android.widget.TextView
+ import androidx.media3.common.Player
+ import androidx.media3.common.Timeline
++import androidx.media3.common.text.Cue
++import androidx.media3.common.text.CueGroup
+ import androidx.media3.common.util.UnstableApi
+ import androidx.media3.exoplayer.ExoPlayer
+ import androidx.media3.ui.AspectRatioFrameLayout
+@@ -52,17 +55,32 @@ class ExoPlayerView @JvmOverloads constructor(context: Context, attrs: Attribute
+         resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+     }
+ 
++    private val customSubtitleOverlay = CustomSubtitleOverlayView(context).apply {
++        layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
++    }
++
+     init {
+         // Add PlayerView with explicit layout parameters
+         val playerViewLayoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+         addView(playerView, playerViewLayoutParams)
+ 
++        // Add custom subtitle overlay above PlayerView
++        addView(customSubtitleOverlay)
++
+         // Add live badge with its own layout parameters
+         val liveBadgeLayoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+         liveBadgeLayoutParams.setMargins(16, 16, 16, 16)
+         addView(liveBadge, liveBadgeLayoutParams)
+     }
+ 
++    fun onCues(cueGroup: CueGroup) {
++        customSubtitleOverlay.setCues(cueGroup.cues)
++    }
++
++    fun onCues(cues: List<Cue>) {
++        customSubtitleOverlay.setCues(cues)
++    }
++
+     fun setPlayer(player: ExoPlayer?) {
+         val currentPlayer = playerView.player
+ 
+@@ -79,6 +97,11 @@ class ExoPlayerView @JvmOverloads constructor(context: Context, attrs: Attribute
+             pendingResizeMode?.let { resizeMode ->
+                 playerView.resizeMode = resizeMode
+             }
++
++            // Reapply subtitle style when player is attached
++            setSubtitleStyle(localStyle)
++        } else {
++            customSubtitleOverlay.setCues(emptyList())
+         }
+     }
+ 
+@@ -108,31 +131,11 @@ class ExoPlayerView @JvmOverloads constructor(context: Context, attrs: Attribute
+     }
+ 
+     fun setSubtitleStyle(style: SubtitleStyle) {
+-        playerView.subtitleView?.let { subtitleView ->
+-            // Reset to defaults
+-            subtitleView.setUserDefaultStyle()
+-            subtitleView.setUserDefaultTextSize()
+-
+-            // Apply custom styling
+-            if (style.fontSize > 0) {
+-                subtitleView.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, style.fontSize.toFloat())
+-            }
+-
+-            subtitleView.setPadding(
+-                style.paddingLeft,
+-                style.paddingTop,
+-                style.paddingRight,
+-                style.paddingBottom
+-            )
+-
+-            if (style.opacity != 0.0f) {
+-                subtitleView.alpha = style.opacity
+-                subtitleView.visibility = android.view.View.VISIBLE
+-            } else {
+-                subtitleView.visibility = android.view.View.GONE
+-            }
+-        }
+         localStyle = style
++        // Hide Media3 default subtitle view so there is no duplicate rendering
++        playerView.subtitleView?.visibility = View.GONE
++        // Apply custom subtitle styling to custom overlay
++        customSubtitleOverlay.setStyle(style)
+     }
+ 
+     fun setShutterColor(color: Int) {
+@@ -223,6 +226,15 @@ class ExoPlayerView @JvmOverloads constructor(context: Context, attrs: Attribute
+     }
+ 
+     private val playerListener = object : Player.Listener {
++        override fun onCues(cueGroup: CueGroup) {
++            customSubtitleOverlay.setCues(cueGroup.cues)
++        }
++
++        @Suppress("DEPRECATION")
++        override fun onCues(cues: List<Cue>) {
++            customSubtitleOverlay.setCues(cues)
++        }
++
+         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+             playerView.post {
+                 playerView.requestLayout()
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/PictureInPictureUtil.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/PictureInPictureUtil.kt
+index 5e36ef2..3eba51d 100644
+--- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/PictureInPictureUtil.kt
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/PictureInPictureUtil.kt
+@@ -24,13 +24,18 @@ import com.brentvatne.common.toolbox.DebugLog
+ import com.brentvatne.receiver.PictureInPictureReceiver
+ import com.facebook.react.uimanager.ThemedReactContext
+ 
+-internal fun Context.findActivity(): ComponentActivity {
++internal fun Context.findActivity(): ComponentActivity? {
+     var context = this
+     while (context is ContextWrapper) {
+         if (context is ComponentActivity) return context
+         context = context.baseContext
+     }
+-    throw IllegalStateException("Picture in picture should be called in the context of an Activity")
++    // Fallback: ThemedReactContext stores the activity separately from the ContextWrapper chain
++    if (this is ThemedReactContext) {
++        val activity = this.getCurrentActivity()
++        if (activity is ComponentActivity) return activity
++    }
++    return null
+ }
+ 
+ object PictureInPictureUtil {
+@@ -39,7 +44,7 @@ object PictureInPictureUtil {
+ 
+     @JvmStatic
+     fun addLifecycleEventListener(context: ThemedReactContext, view: ReactExoplayerView): Runnable {
+-        val activity = context.findActivity()
++        val activity = context.findActivity() ?: return Runnable {}
+ 
+         val onPictureInPictureModeChanged = Consumer<PictureInPictureModeChangedInfo> { info ->
+             view.setIsInPictureInPicture(info.isInPictureInPictureMode)
+@@ -73,16 +78,17 @@ object PictureInPictureUtil {
+     @JvmStatic
+     fun enterPictureInPictureMode(context: ThemedReactContext, pictureInPictureParams: PictureInPictureParams?) {
+         if (!isSupportPictureInPicture(context)) return
++        val activity = context.findActivity() ?: return
+         if (isSupportPictureInPictureAction() && pictureInPictureParams != null) {
+             try {
+-                context.findActivity().enterPictureInPictureMode(pictureInPictureParams)
++                activity.enterPictureInPictureMode(pictureInPictureParams)
+             } catch (e: IllegalStateException) {
+                 DebugLog.e(TAG, e.toString())
+             }
+         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+             try {
+                 @Suppress("DEPRECATION")
+-                context.findActivity().enterPictureInPictureMode()
++                activity.enterPictureInPictureMode()
+             } catch (e: IllegalStateException) {
+                 DebugLog.e(TAG, e.toString())
+             }
+@@ -119,8 +125,9 @@ object PictureInPictureUtil {
+     private fun updatePictureInPictureActions(context: ThemedReactContext, pipParams: PictureInPictureParams) {
+         if (!isSupportPictureInPictureAction()) return
+         if (!isSupportPictureInPicture(context)) return
++        val activity = context.findActivity() ?: return
+         try {
+-            context.findActivity().setPictureInPictureParams(pipParams)
++            activity.setPictureInPictureParams(pipParams)
+         } catch (e: IllegalStateException) {
+             DebugLog.e(TAG, e.toString())
+         }
+@@ -196,7 +203,7 @@ object PictureInPictureUtil {
+     }
+ 
+     private fun checkIsUserAllowPIP(context: ThemedReactContext): Boolean {
+-        val activity = context.currentActivity ?: return false
++        val activity = context.getCurrentActivity() ?: return false
+         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+             @SuppressLint("InlinedApi")
+             val result = AppOpsManagerCompat.noteOpNoThrow(
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
+index e16ac96..d7492f0 100644
+--- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
+@@ -57,9 +57,18 @@ import androidx.media3.datasource.DataSource;
+ import androidx.media3.datasource.DataSpec;
+ import androidx.media3.datasource.DefaultDataSource;
+ import androidx.media3.datasource.HttpDataSource;
++import androidx.media3.datasource.TransferListener;
++import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy;
++import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy;
++import java.io.ByteArrayInputStream;
++import java.nio.charset.StandardCharsets;
++import java.util.Collections;
+ import androidx.media3.exoplayer.DefaultLoadControl;
++import androidx.media3.exoplayer.LoadControl;
++import androidx.media3.exoplayer.analytics.PlayerId;
+ import androidx.media3.exoplayer.DefaultRenderersFactory;
+ import androidx.media3.exoplayer.ExoPlayer;
++import androidx.media3.exoplayer.RendererCapabilities;
+ import androidx.media3.exoplayer.dash.DashMediaSource;
+ import androidx.media3.exoplayer.dash.DashUtil;
+ import androidx.media3.exoplayer.dash.DefaultDashChunkSource;
+@@ -88,6 +97,10 @@ import androidx.media3.exoplayer.source.ClippingMediaSource;
+ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+ import androidx.media3.exoplayer.source.MediaSource;
+ import androidx.media3.exoplayer.source.MergingMediaSource;
++import androidx.media3.exoplayer.source.WrappingMediaSource;
++import androidx.media3.extractor.Extractor;
++import androidx.media3.extractor.text.DefaultSubtitleParserFactory;
++import androidx.media3.extractor.text.SubtitleExtractor;
+ import androidx.media3.exoplayer.source.ProgressiveMediaSource;
+ import androidx.media3.exoplayer.source.TrackGroupArray;
+ import androidx.media3.exoplayer.source.ads.AdsMediaSource;
+@@ -191,6 +204,7 @@ public class ReactExoplayerView extends FrameLayout implements
+ 
+     private DataSource.Factory mediaDataSourceFactory;
+     private ExoPlayer player;
++    private RNVLoadControl loadControl;
+     private DefaultTrackSelector trackSelector;
+     private boolean playerNeedsSource;
+     private ServiceConnection playbackServiceConnection;
+@@ -234,6 +248,7 @@ public class ReactExoplayerView extends FrameLayout implements
+     private boolean isSeeking = false;
+     private long seekPosition = -1;
+     private boolean hasVideoEnded = false;
++    private boolean hasRetriedUnsupportedAudioTrack = false;
+ 
+     // Props from React
+     private Source source = new Source();
+@@ -562,8 +577,19 @@ public class ReactExoplayerView extends FrameLayout implements
+     }
+ 
+     private class RNVLoadControl extends DefaultLoadControl {
++        // Never let buffers take more than this share of the app heap, whatever size is asked for.
++        private static final double MAX_SIZE_BUDGET_HEAP_PERCENT = 0.35;
++        // ...and never more than 1/32 of total device RAM, so low-RAM TV boxes stay small.
++        private static final long MAX_SIZE_BUDGET_RAM_DIVISOR = 32;
+         private final int availableHeapInBytes;
+         private final Runtime runtime;
++        // Size caps in bytes; 0 when the app gives only time limits.
++        private final long forwardBufferBytes;
++        private final long backBufferBytes;
++        // Latest playback state, used to estimate bytes per second of buffered media.
++        private long lastPositionUs = 0;
++        private long lastForwardUs = 0;
++        private long lastBackUs = 0;
+         public RNVLoadControl(DefaultAllocator allocator, BufferConfig config) {
+             super(allocator,
+                     config.getMinBufferMs() != BufferConfig.Companion.getBufferConfigPropUnsetInt()
+@@ -583,17 +609,92 @@ public class ReactExoplayerView extends FrameLayout implements
+                     config.getBackBufferDurationMs() != BufferConfig.Companion.getBufferConfigPropUnsetInt()
+                             ? config.getBackBufferDurationMs()
+                             : DefaultLoadControl.DEFAULT_BACK_BUFFER_DURATION_MS,
+-                    DefaultLoadControl.DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME);
++                    // Keep the back buffer from the previous keyframe, so a seek back inside it
++                    // can start decoding without loading again.
++                    true);
+             runtime = Runtime.getRuntime();
+             ActivityManager activityManager = (ActivityManager) themedReactContext.getSystemService(ThemedReactContext.ACTIVITY_SERVICE);
+             double maxHeap = config.getMaxHeapAllocationPercent() != BufferConfig.Companion.getBufferConfigPropUnsetDouble()
+                     ? config.getMaxHeapAllocationPercent()
+                     : DEFAULT_MAX_HEAP_ALLOCATION_PERCENT;
+-            availableHeapInBytes = (int) Math.floor(activityManager.getMemoryClass() * maxHeap * 1024 * 1024);
++            long heapBytes = (long) activityManager.getMemoryClass() * 1024 * 1024;
++            forwardBufferBytes = config.getForwardBufferMB() > 0 ? config.getForwardBufferMB() * 1024L * 1024L : 0;
++            backBufferBytes = config.getBackBufferMB() > 0 ? config.getBackBufferMB() * 1024L * 1024L : 0;
++            if (forwardBufferBytes > 0) {
++                // Size mode: the budget is forward + back size, bounded by a safe share of the heap.
++                // maxMemory() is the real heap limit, including android:largeHeap.
++                ActivityManager.MemoryInfo memoryInfo = new ActivityManager.MemoryInfo();
++                activityManager.getMemoryInfo(memoryInfo);
++                long safeBytes = Math.min(
++                        (long) (runtime.maxMemory() * MAX_SIZE_BUDGET_HEAP_PERCENT),
++                        memoryInfo.totalMem / MAX_SIZE_BUDGET_RAM_DIVISOR);
++                long budget = Math.min(forwardBufferBytes + backBufferBytes, safeBytes);
++                availableHeapInBytes = (int) budget;
++            } else {
++                availableHeapInBytes = (int) Math.floor(heapBytes * maxHeap);
++            }
++        }
++
++        // Bytes per microsecond of the media held now (forward + back), or 0 when unknown.
++        private double bytesPerUs() {
++            int loadedBytes = getAllocator().getTotalBytesAllocated();
++            long bufferedUs = lastForwardUs + Math.min(lastBackUs, lastPositionUs);
++            return loadedBytes > 0 && bufferedUs > 0 ? (double) loadedBytes / bufferedUs : 0;
++        }
++
++        // Back buffer size the budget leaves room for (the heap cap can be below forward + back).
++        private long backBudgetBytes() {
++            return Math.max(0, Math.min(backBufferBytes, availableHeapInBytes - Math.min(forwardBufferBytes, availableHeapInBytes)));
++        }
++
++        // True when the back buffer has a size cap, enforced by SizeLimitedBackBufferSource.
++        boolean limitsBackBufferBySize() {
++            return forwardBufferBytes > 0 && backBufferBytes > 0 && getBackBufferDurationUs(null) > 0;
++        }
++
++        // The back buffer can only be trimmed by duration, so turn its size cap into a duration
++        // using the observed bytes per second of what is buffered now. A 50 GB remux gets a few
++        // seconds, a small encode gets the whole configured window.
++        long getSizeLimitedBackBufferUs() {
++            long configured = getBackBufferDurationUs(null);
++            double rate = bytesPerUs();
++            long allowedUs = rate > 0 ? (long) (backBudgetBytes() / rate) : 0;
++            lastBackUs = Math.max(0, Math.min(allowedUs, configured));
++            return lastBackUs;
+         }
+ 
++        // In size mode the forward buffer stops at its own cap, so the rest of the budget stays
++        // free for the back buffer. Forward bytes are estimated from its share of the held media.
++        private boolean isForwardFull() {
++            if (forwardBufferBytes <= 0) {
++                return false;
++            }
++            long heldBackUs = Math.min(lastBackUs, lastPositionUs);
++            long bufferedUs = lastForwardUs + heldBackUs;
++            if (bufferedUs <= 0) {
++                return false;
++            }
++            long loadedBytes = getAllocator().getTotalBytesAllocated();
++            long forwardBytes = loadedBytes * lastForwardUs / bufferedUs;
++            return forwardBytes >= Math.min(forwardBufferBytes, availableHeapInBytes);
++        }
++
++        // Media3 1.8 calls this overload; DefaultLoadControl's version never reaches the
++        // deprecated three-argument overload RNV used to override, so without this the memory checks never ran.
+         @Override
+-        public boolean shouldContinueLoading(long playbackPositionUs, long bufferedDurationUs, float playbackSpeed) {
++        public boolean shouldContinueLoading(LoadControl.Parameters parameters) {
++            lastPositionUs = parameters.playbackPositionUs;
++            lastForwardUs = parameters.bufferedDurationUs;
++            if (isForwardFull() && parameters.bufferedDurationUs / 1000 > 5000) {
++                return false;
++            }
++            if (!shouldContinueLoadingForMemory(parameters.bufferedDurationUs)) {
++                return false;
++            }
++            return super.shouldContinueLoading(parameters);
++        }
++
++        private boolean shouldContinueLoadingForMemory(long bufferedDurationUs) {
+             if (bufferingStrategy == BufferingStrategy.BufferingStrategyEnum.DisableBuffering) {
+                 return false;
+             } else if (bufferingStrategy == BufferingStrategy.BufferingStrategyEnum.DependingOnMemory) {
+@@ -601,7 +702,9 @@ public class ReactExoplayerView extends FrameLayout implements
+                 // when available memory on device become low.
+                 int loadedBytes = getAllocator().getTotalBytesAllocated();
+                 boolean isHeapReached = availableHeapInBytes > 0 && loadedBytes >= availableHeapInBytes;
+-                if (isHeapReached) {
++                // Keep a few seconds ahead even at the budget: stopping with almost nothing
++                // buffered stalls playback. The free-memory check below still guards the heap.
++                if (isHeapReached && bufferedDurationUs / 1000 > 5000) {
+                     return false;
+                 }
+                 long usedMemory = runtime.totalMemory() - runtime.freeMemory();
+@@ -609,7 +712,7 @@ public class ReactExoplayerView extends FrameLayout implements
+                 double minBufferMemoryReservePercent = source.getBufferConfig().getMinBufferMemoryReservePercent() != BufferConfig.Companion.getBufferConfigPropUnsetDouble()
+                         ? source.getBufferConfig().getMinBufferMemoryReservePercent()
+                         : ReactExoplayerView.DEFAULT_MIN_BUFFER_MEMORY_RESERVE;
+-                long reserveMemory = (long) minBufferMemoryReservePercent * runtime.maxMemory();
++                long reserveMemory = (long) (minBufferMemoryReservePercent * runtime.maxMemory());
+                 long bufferedMs = bufferedDurationUs / (long) 1000;
+                 if (reserveMemory > freeMemory && bufferedMs > 2000) {
+                     // We don't have enough memory in reserve so we stop buffering to allow other components to use it instead
+@@ -622,7 +725,128 @@ public class ReactExoplayerView extends FrameLayout implements
+                 }
+             }
+             // "default" case or normal case for "DependingOnMemory"
+-            return super.shouldContinueLoading(playbackPositionUs, bufferedDurationUs, playbackSpeed);
++            return true;
++        }
++    }
++
++    // media3 reads the back buffer duration once, when the player is created, so it cannot follow
++    // a size cap. The load control reports the full time window, and this source narrows every
++    // discard to the window the size cap allows at that moment.
++    private static final class SizeLimitedBackBufferSource extends WrappingMediaSource {
++        private final RNVLoadControl loadControl;
++
++        SizeLimitedBackBufferSource(MediaSource mediaSource, RNVLoadControl loadControl) {
++            super(mediaSource);
++            this.loadControl = loadControl;
++        }
++
++        @Override
++        public androidx.media3.exoplayer.source.MediaPeriod createPeriod(
++                MediaSource.MediaPeriodId id, androidx.media3.exoplayer.upstream.Allocator allocator, long startPositionUs) {
++            return new SizeLimitedBackBufferPeriod(super.createPeriod(id, allocator, startPositionUs), loadControl);
++        }
++
++        @Override
++        public void releasePeriod(androidx.media3.exoplayer.source.MediaPeriod mediaPeriod) {
++            super.releasePeriod(((SizeLimitedBackBufferPeriod) mediaPeriod).mediaPeriod);
++        }
++    }
++
++    private static final class SizeLimitedBackBufferPeriod
++            implements androidx.media3.exoplayer.source.MediaPeriod, androidx.media3.exoplayer.source.MediaPeriod.Callback {
++        final androidx.media3.exoplayer.source.MediaPeriod mediaPeriod;
++        private final RNVLoadControl loadControl;
++        private androidx.media3.exoplayer.source.MediaPeriod.Callback callback;
++
++        SizeLimitedBackBufferPeriod(androidx.media3.exoplayer.source.MediaPeriod mediaPeriod, RNVLoadControl loadControl) {
++            this.mediaPeriod = mediaPeriod;
++            this.loadControl = loadControl;
++        }
++
++        @Override
++        public void discardBuffer(long positionUs, boolean toKeyframe) {
++            // media3 passes the playback position minus the full window. When it frees memory in
++            // an emergency it passes the playback position itself; the result then discards up to
++            // the read position, which drops the whole back buffer as intended.
++            long playbackPositionUs = positionUs + loadControl.getBackBufferDurationUs(null);
++            mediaPeriod.discardBuffer(playbackPositionUs - loadControl.getSizeLimitedBackBufferUs(), toKeyframe);
++        }
++
++        @Override
++        public void prepare(androidx.media3.exoplayer.source.MediaPeriod.Callback callback, long positionUs) {
++            this.callback = callback;
++            mediaPeriod.prepare(this, positionUs);
++        }
++
++        @Override
++        public void onPrepared(androidx.media3.exoplayer.source.MediaPeriod period) {
++            callback.onPrepared(this);
++        }
++
++        @Override
++        public void onContinueLoadingRequested(androidx.media3.exoplayer.source.MediaPeriod period) {
++            callback.onContinueLoadingRequested(this);
++        }
++
++        @Override
++        public void maybeThrowPrepareError() throws java.io.IOException {
++            mediaPeriod.maybeThrowPrepareError();
++        }
++
++        @Override
++        public TrackGroupArray getTrackGroups() {
++            return mediaPeriod.getTrackGroups();
++        }
++
++        @Override
++        public java.util.List<StreamKey> getStreamKeys(java.util.List<ExoTrackSelection> trackSelections) {
++            return mediaPeriod.getStreamKeys(trackSelections);
++        }
++
++        @Override
++        public long selectTracks(ExoTrackSelection[] selections, boolean[] mayRetainStreamFlags,
++                androidx.media3.exoplayer.source.SampleStream[] streams, boolean[] streamResetFlags, long positionUs) {
++            return mediaPeriod.selectTracks(selections, mayRetainStreamFlags, streams, streamResetFlags, positionUs);
++        }
++
++        @Override
++        public long readDiscontinuity() {
++            return mediaPeriod.readDiscontinuity();
++        }
++
++        @Override
++        public long seekToUs(long positionUs) {
++            return mediaPeriod.seekToUs(positionUs);
++        }
++
++        @Override
++        public long getAdjustedSeekPositionUs(long positionUs, androidx.media3.exoplayer.SeekParameters seekParameters) {
++            return mediaPeriod.getAdjustedSeekPositionUs(positionUs, seekParameters);
++        }
++
++        @Override
++        public long getBufferedPositionUs() {
++            return mediaPeriod.getBufferedPositionUs();
++        }
++
++        @Override
++        public long getNextLoadPositionUs() {
++            return mediaPeriod.getNextLoadPositionUs();
++        }
++
++        @Override
++        public boolean continueLoading(androidx.media3.exoplayer.LoadingInfo loadingInfo) {
++            return mediaPeriod.continueLoading(loadingInfo);
++        }
++
++        @Override
++        public boolean isLoading() {
++            return mediaPeriod.isLoading();
++        }
++
++        @Override
++        public void reevaluateBuffer(long positionUs) {
++            mediaPeriod.reevaluateBuffer(positionUs);
+         }
+     }
+ 
+@@ -715,11 +939,12 @@ public class ReactExoplayerView extends FrameLayout implements
+     private void initializePlayerCore(ReactExoplayerView self) {
+         ExoTrackSelection.Factory videoTrackSelectionFactory = new AdaptiveTrackSelection.Factory();
+         self.trackSelector = new DefaultTrackSelector(getContext(), videoTrackSelectionFactory);
++        hasRetriedUnsupportedAudioTrack = false;
+         self.trackSelector.setParameters(trackSelector.buildUponParameters()
+                 .setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate));
+ 
+         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
+-        RNVLoadControl loadControl = new RNVLoadControl(
++        loadControl = new RNVLoadControl(
+                 allocator,
+                 source.getBufferConfig()
+         );
+@@ -732,7 +957,7 @@ public class ReactExoplayerView extends FrameLayout implements
+ 
+         DefaultRenderersFactory renderersFactory =
+                 new DefaultRenderersFactory(getContext())
+-                        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
++                        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                         .setEnableDecoderFallback(true)
+                         .forceEnableMediaCodecAsynchronousQueueing();
+ 
+@@ -877,6 +1102,10 @@ public class ReactExoplayerView extends FrameLayout implements
+             }
+         }
+ 
++        if (loadControl != null && loadControl.limitsBackBufferBySize()) {
++            mediaSource = new SizeLimitedBackBufferSource(mediaSource, loadControl);
++        }
++
+         boolean haveResumePosition = resumeWindow != C.INDEX_UNSET;
+         if (haveResumePosition) {
+             player.seekTo(resumeWindow, resumePosition);
+@@ -1101,11 +1330,13 @@ public class ReactExoplayerView extends FrameLayout implements
+                 } else if ("file".equals(uri.getScheme()) ||
+                         !useCache) {
+                     mediaSourceFactory = new ProgressiveMediaSource.Factory(
+-                            mediaDataSourceFactory
++                            new ChainedMatroskaDataSource.Factory(mediaDataSourceFactory)
+                     );
+                 } else {
++                    DataSource.Factory cachedDataSourceFactory =
++                            RNVSimpleCache.INSTANCE.getCacheFactory(buildHttpDataSourceFactory(true));
+                     mediaSourceFactory = new ProgressiveMediaSource.Factory(
+-                            RNVSimpleCache.INSTANCE.getCacheFactory(buildHttpDataSourceFactory(true))
++                            new ChainedMatroskaDataSource.Factory(cachedDataSourceFactory)
+                     );
+ 
+                 }
+@@ -1144,12 +1375,62 @@ public class ReactExoplayerView extends FrameLayout implements
+                 ? overridenMediaItemBuilder.build()
+                 : mediaItemBuilder.build();
+ 
++        // Strip subtitle configurations before handing the MediaItem to the factory so that
++        // no factory variant (including overridden DefaultMediaSourceFactory) creates its own
++        // subtitle sources via legacy paths. We handle all subtitle merging below.
++        MediaItem mediaItemForSource = mediaItem.buildUpon()
++                .setSubtitleConfigurations(ImmutableList.of())
++                .build();
++
+         MediaSource mediaSource = mediaSourceFactory
+                 .setDrmSessionManagerProvider(drmProvider)
+                 .setLoadErrorHandlingPolicy(
+                         config.buildLoadErrorHandlingPolicy(source.getMinLoadRetryCount())
+                 )
+-                .createMediaSource(mediaItem);
++                .createMediaSource(mediaItemForSource);
++
++        // ProgressiveMediaSource.Factory (and HLS/DASH variants) silently ignore
++        // MediaItem.SubtitleConfiguration entries. Manually merge sideloaded subtitle
++        // sources so they appear in MappedTrackInfo and can be selected via setSelectedTextTrack.
++        if (mediaItem.localConfiguration != null && !mediaItem.localConfiguration.subtitleConfigurations.isEmpty()) {
++            DataSource.Factory rawSubtitleDataSourceFactory = buildDataSourceFactory(false);
++            DataSource.Factory subtitleDataSourceFactory = () -> new SafeSubtitleDataSource(rawSubtitleDataSourceFactory.createDataSource());
++            DefaultSubtitleParserFactory subtitleParserFactory = new DefaultSubtitleParserFactory();
++            LoadErrorHandlingPolicy noRetryPolicy = new DefaultLoadErrorHandlingPolicy() {
++                @Override
++                public long getRetryDelayMsFor(LoadErrorInfo loadErrorInfo) {
++                    return C.TIME_UNSET;
++                }
++
++                @Override
++                public int getMinimumLoadableRetryCount(int dataType) {
++                    return 0;
++                }
++            };
++            List<MediaSource> mergedSources = new ArrayList<>();
++            mergedSources.add(mediaSource);
++            for (MediaItem.SubtitleConfiguration subtitleConfig : mediaItem.localConfiguration.subtitleConfigurations) {
++                Format subtitleFormat = new Format.Builder()
++                        .setSampleMimeType(subtitleConfig.mimeType)
++                        .setLanguage(subtitleConfig.language)
++                        .setLabel(subtitleConfig.label)
++                        .setSelectionFlags(subtitleConfig.selectionFlags)
++                        .setRoleFlags(subtitleConfig.roleFlags)
++                        .build();
++                if (!subtitleParserFactory.supportsFormat(subtitleFormat)) {
++                    DebugLog.w(TAG, "Skipping sideloaded subtitle track with unsupported format: " + subtitleConfig.mimeType);
++                    continue;
++                }
++                mergedSources.add(new ProgressiveMediaSource.Factory(
++                        subtitleDataSourceFactory,
++                        () -> new Extractor[]{new SubtitleExtractor(subtitleParserFactory.create(subtitleFormat), subtitleFormat)}
++                ).setLoadErrorHandlingPolicy(noRetryPolicy)
++                 .createMediaSource(MediaItem.fromUri(subtitleConfig.uri)));
++            }
++            if (mergedSources.size() > 1) {
++                mediaSource = new MergingMediaSource(mergedSources.toArray(new MediaSource[0]));
++            }
++        }
+ 
+         if (cropStartMs >= 0 && cropEndMs >= 0) {
+             return new ClippingMediaSource(mediaSource, cropStartMs * 1000, cropEndMs * 1000);
+@@ -1162,6 +1443,78 @@ public class ReactExoplayerView extends FrameLayout implements
+         return mediaSource;
+     }
+ 
++    private static class SafeSubtitleDataSource implements DataSource {
++        private static final byte[] EMPTY_VTT = "WEBVTT\n\n".getBytes(StandardCharsets.UTF_8);
++        private final DataSource upstream;
++        private ByteArrayInputStream fallbackStream = null;
++        private boolean isFallback = false;
++        private Uri currentUri = null;
++
++        public SafeSubtitleDataSource(DataSource upstream) {
++            this.upstream = upstream;
++        }
++
++        @Override
++        public void addTransferListener(TransferListener transferListener) {
++            upstream.addTransferListener(transferListener);
++        }
++
++        @Override
++        public long open(DataSpec dataSpec) {
++            this.currentUri = dataSpec.uri;
++            this.isFallback = false;
++            this.fallbackStream = null;
++            try {
++                return upstream.open(dataSpec);
++            } catch (Exception e) {
++                DebugLog.w(TAG, "Failed to load external subtitle from " + dataSpec.uri + ": " + e.getMessage() + ". Skipping gracefully.");
++                this.isFallback = true;
++                this.fallbackStream = new ByteArrayInputStream(EMPTY_VTT);
++                return EMPTY_VTT.length;
++            }
++        }
++
++        @Override
++        public int read(byte[] buffer, int offset, int length) {
++            if (isFallback) {
++                if (fallbackStream != null) {
++                    int read = fallbackStream.read(buffer, offset, length);
++                    return read == -1 ? C.RESULT_END_OF_INPUT : read;
++                }
++                return C.RESULT_END_OF_INPUT;
++            }
++            try {
++                return upstream.read(buffer, offset, length);
++            } catch (Exception e) {
++                DebugLog.w(TAG, "Failed reading subtitle stream: " + e.getMessage() + ". Ending subtitle gracefully.");
++                return C.RESULT_END_OF_INPUT;
++            }
++        }
++
++        @Nullable
++        @Override
++        public Uri getUri() {
++            return isFallback ? currentUri : upstream.getUri();
++        }
++
++        @Override
++        public Map<String, List<String>> getResponseHeaders() {
++            return isFallback ? Collections.emptyMap() : upstream.getResponseHeaders();
++        }
++
++        @Override
++        public void close() {
++            if (!isFallback) {
++                try {
++                    upstream.close();
++                } catch (Exception ignored) {
++                }
++            }
++            fallbackStream = null;
++            isFallback = false;
++        }
++    }
++
+     @Nullable
+     private List<MediaItem.SubtitleConfiguration> buildSubtitleConfigurations() {
+         if (source.getSideLoadedTextTracks() == null || source.getSideLoadedTextTracks().getTracks().isEmpty()) {
+@@ -1183,9 +1536,23 @@ public class ReactExoplayerView extends FrameLayout implements
+                     }
+                 }
+                 
++                String mimeType = track.getType();
++                if (mimeType == null || mimeType.isEmpty() || "application/octet-stream".equals(mimeType) || "text/plain".equals(mimeType)) {
++                    String uriStr = track.getUri() != null ? track.getUri().toString().toLowerCase() : "";
++                    if (uriStr.contains(".vtt")) {
++                        mimeType = androidx.media3.common.MimeTypes.TEXT_VTT;
++                    } else if (uriStr.contains(".ttml") || uriStr.contains(".xml") || uriStr.contains(".dfxp")) {
++                        mimeType = androidx.media3.common.MimeTypes.APPLICATION_TTML;
++                    } else {
++                        mimeType = androidx.media3.common.MimeTypes.APPLICATION_SUBRIP;
++                    }
++                } else if ("text/srt".equals(mimeType)) {
++                    mimeType = androidx.media3.common.MimeTypes.APPLICATION_SUBRIP;
++                }
++
+                 MediaItem.SubtitleConfiguration.Builder configBuilder = new MediaItem.SubtitleConfiguration.Builder(track.getUri())
+                         .setId(trackId)
+-                        .setMimeType(track.getType())
++                        .setMimeType(mimeType)
+                         .setLabel(label)
+                         .setRoleFlags(C.ROLE_FLAG_SUBTITLE);
+                 
+@@ -1586,7 +1953,17 @@ public class ReactExoplayerView extends FrameLayout implements
+     }
+ 
+     private ArrayList<VideoTrack> getVideoTrackInfo() {
+-        ArrayList<VideoTrack> videoTracks = new ArrayList<>();
++        // Media3 exposes the resolved track list through Player.getCurrentTracks(), which is
++        // populated by the same pass that triggers onTracksChanged. Prefer it over the legacy
++        // MappedTrackInfo lookup below: that one resolves tracks through a renderer index and
++        // yields an empty list whenever the mapped info is not available yet, even though the
++        // video is already playing. An empty list leaves the quality selector with nothing to
++        // offer, so the user cannot switch resolution at all.
++        ArrayList<VideoTrack> videoTracks = getVideoTrackInfoFromCurrentTracks();
++        if (!videoTracks.isEmpty()) {
++            return videoTracks;
++        }
++
+         if (trackSelector == null) {
+             // Likely player is unmounting so no video tracks are available anymore
+             return videoTracks;
+@@ -1612,6 +1989,72 @@ public class ReactExoplayerView extends FrameLayout implements
+         return videoTracks;
+     }
+ 
++    private ArrayList<VideoTrack> getVideoTrackInfoFromCurrentTracks() {
++        ArrayList<VideoTrack> supportedTracks = new ArrayList<>();
++        ArrayList<VideoTrack> allTracks = new ArrayList<>();
++        if (player == null) {
++            return supportedTracks;
++        }
++
++        // During adaptive playback the track selection covers every track the selector may
++        // switch between, so Tracks.Group#isTrackSelected reports true for all of them. The
++        // currently rendered format is the only meaningful "selected" value for a quality
++        // menu, so resolve it from the player instead.
++        Format activeFormat = player.getVideoFormat();
++
++        try {
++            for (Tracks.Group group : player.getCurrentTracks().getGroups()) {
++                if (group.getType() != C.TRACK_TYPE_VIDEO) {
++                    continue;
++                }
++
++                for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
++                    Format format = group.getTrackFormat(trackIndex);
++                    boolean isActive = isSameVideoFormat(format, activeFormat);
++                    boolean isSupported = group.isTrackSupported(trackIndex);
++
++                    // Keep the two lists independent: they are returned to callers that may
++                    // mutate the tracks, and sharing instances would couple them.
++                    VideoTrack track = exoplayerVideoTrackToGenericVideoTrack(format, trackIndex);
++                    track.setSelected(isActive);
++                    allTracks.add(track);
++
++                    if (isSupported) {
++                        VideoTrack supportedTrack = exoplayerVideoTrackToGenericVideoTrack(format, trackIndex);
++                        supportedTrack.setSelected(isActive);
++                        supportedTracks.add(supportedTrack);
++                    }
++                }
++            }
++        } catch (Exception e) {
++            DebugLog.w(TAG, "Failed to read video tracks from current tracks: " + e);
++            return supportedTracks;
++        }
++
++        // Reporting nothing would hide the quality selector entirely, so fall back to the
++        // unfiltered list when the decoder reports no supported track but the media does
++        // expose video tracks.
++        return supportedTracks.isEmpty() ? allTracks : supportedTracks;
++    }
++
++    private boolean isSameVideoFormat(Format format, Format activeFormat) {
++        if (format == null || activeFormat == null) {
++            return false;
++        }
++        if (format.width > 0 && format.height > 0 && activeFormat.width > 0 && activeFormat.height > 0) {
++            if (format.width == activeFormat.width && format.height == activeFormat.height) {
++                if (format.bitrate > 0 && activeFormat.bitrate > 0) {
++                    return format.bitrate == activeFormat.bitrate;
++                }
++                return true;
++            }
++        }
++        if (format.id != null && activeFormat.id != null && format.id.equals(activeFormat.id)) {
++            return true;
++        }
++        return format.height > 0 && format.height == activeFormat.height;
++    }
++
+     private ArrayList<VideoTrack> getVideoTrackInfoFromManifest() {
+         return this.getVideoTrackInfoFromManifest(0);
+     }
+@@ -1890,6 +2333,13 @@ public class ReactExoplayerView extends FrameLayout implements
+         updateSubtitleButtonVisibility();
+     }
+ 
++    @Override
++    public void onVideoSizeChanged(@NonNull androidx.media3.common.VideoSize videoSize) {
++        DebugLog.d(TAG, "onVideoSizeChanged: " + videoSize.width + "x" + videoSize.height);
++        ArrayList<VideoTrack> videoTracks = getVideoTrackInfo();
++        eventEmitter.onVideoTracks.invoke(videoTracks);
++    }
++    
+     
+     private boolean hasBuiltInTextTracks() {
+         if (player == null || trackSelector == null) return false;
+@@ -1954,6 +2404,12 @@ public class ReactExoplayerView extends FrameLayout implements
+     public void onPlayerError(@NonNull PlaybackException e) {
+         String errorString = "ExoPlaybackException: " + PlaybackException.getErrorCodeName(e.errorCode);
+         String errorCode = "2" + e.errorCode;
++        if (e.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
++                && !hasRetriedUnsupportedAudioTrack
++                && recoverFromUnsupportedAudioTrack()) {
++            hasRetriedUnsupportedAudioTrack = true;
++            return;
++        }
+         switch(e.errorCode) {
+             case PlaybackException.ERROR_CODE_DRM_DEVICE_REVOKED:
+             case PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED:
+@@ -2031,6 +2487,9 @@ public class ReactExoplayerView extends FrameLayout implements
+     }
+ 
+     public void onCues(CueGroup cueGroup) {
++        if (exoPlayerView != null) {
++            exoPlayerView.onCues(cueGroup);
++        }
+         if (!cueGroup.cues.isEmpty() && cueGroup.cues.get(0).text != null) {
+             String subtitleText = cueGroup.cues.get(0).text.toString();
+             eventEmitter.onTextTrackDataChanged.invoke(subtitleText);
+@@ -2147,6 +2606,12 @@ public class ReactExoplayerView extends FrameLayout implements
+                     TrackGroupArray groups = info.getTrackGroups(textRendererIndex);
+                     boolean trackFound = false;
+                     
++                    // getTextTrackInfo() reports a flat index across all text groups. With
++                    // MergingMediaSource each sideloaded subtitle is its own single-track group,
++                    // so the local trackIndex is always 0. Track a global flat counter that mirrors
++                    // the JS-facing index so "index" selection actually matches the chosen track.
++                    int globalTextTrackIndex = 0;
++
+                     for (int groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+                         TrackGroup group = groups.get(groupIndex);
+                         for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
+@@ -2159,7 +2624,7 @@ public class ReactExoplayerView extends FrameLayout implements
+                                 isMatch = true;
+                             } else if ("index".equals(type)) {
+                                 int targetIndex = ReactBridgeUtils.safeParseInt(value, -1);
+-                                if (targetIndex == trackIndex) {
++                                if (targetIndex == globalTextTrackIndex) {
+                                     isMatch = true;
+                                 }
+                             }
+@@ -2171,6 +2636,8 @@ public class ReactExoplayerView extends FrameLayout implements
+                                 trackFound = true;
+                                 break;
+                             }
++
++                            globalTextTrackIndex++;
+                         }
+                         if (trackFound) break;
+                     }
+@@ -2197,6 +2664,101 @@ public class ReactExoplayerView extends FrameLayout implements
+         }
+     }
+ 
++    /**
++     * Applies a video track selection using Player#getCurrentTracks() instead of the track
++     * selector's mapped track info.
++     *
++     * The mapped info lookup used by setSelectedTrack resolves the video renderer to an empty
++     * TrackGroupArray in a number of cases (notably adaptive streams once playback has already
++     * started), which leaves groupIndex unset. setSelectedTrack then disables the video renderer
++     * and returns without ever calling setParameters, so the requested quality is silently
++     * ignored. getCurrentTracks() is populated by the same pass that fires onTracksChanged and is
++     * the source the quality list itself is built from, so selection and enumeration agree on
++     * indices.
++     *
++     * @return true when the selection was applied and the caller must not continue.
++     */
++    private boolean setSelectedVideoTrackFromCurrentTracks(int rendererIndex, String type, String value) {
++        if (player == null || trackSelector == null) {
++            return false;
++        }
++
++        try {
++            for (Tracks.Group group : player.getCurrentTracks().getGroups()) {
++                if (group.getType() != C.TRACK_TYPE_VIDEO) {
++                    continue;
++                }
++
++                TrackGroup mediaGroup = group.getMediaTrackGroup();
++                List<Integer> selectedTracks = resolveVideoTrackIndices(mediaGroup, type, value);
++                if (selectedTracks.isEmpty()) {
++                    continue;
++                }
++
++                DefaultTrackSelector.Parameters.Builder selectionParameters = trackSelector.getParameters()
++                        .buildUpon()
++                        // A previous failed selection may have disabled the renderer entirely.
++                        .setRendererDisabled(rendererIndex, false)
++                        .setExceedRendererCapabilitiesIfNecessary(true)
++                        .setExceedVideoConstraintsIfNecessary(true)
++                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO);
++
++                if (isUsingVideoABR()) {
++                    // Auto: let the selector move between every track again.
++                    selectionParameters.setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate);
++                } else {
++                    // A fixed rendition must not be filtered out by a leftover bitrate cap.
++                    selectionParameters.setMaxVideoBitrate(Integer.MAX_VALUE);
++                    selectionParameters.addOverride(new TrackSelectionOverride(mediaGroup, selectedTracks));
++                }
++
++                trackSelector.setParameters(selectionParameters.build());
++                DebugLog.d(TAG, "Applied video track selection from current tracks: type=" + type
++                        + ", value=" + value + ", tracks=" + selectedTracks);
++                return true;
++            }
++        } catch (Exception e) {
++            DebugLog.e(TAG, "Error applying video track selection from current tracks: " + e.getMessage());
++        }
++
++        return false;
++    }
++
++    /** Resolves the track indices within {@code mediaGroup} that satisfy the requested selection. */
++    private List<Integer> resolveVideoTrackIndices(TrackGroup mediaGroup, String type, String value) {
++        List<Integer> selectedTracks = new ArrayList<>();
++
++        if (isUsingVideoABR()) {
++            for (int trackIndex = 0; trackIndex < mediaGroup.length; trackIndex++) {
++                selectedTracks.add(trackIndex);
++            }
++            return selectedTracks;
++        }
++
++        int requested = ReactBridgeUtils.safeParseInt(value, -1);
++        if (requested == -1) {
++            return selectedTracks;
++        }
++
++        if ("index".equals(type)) {
++            if (requested < mediaGroup.length) {
++                selectedTracks.add(requested);
++            }
++            return selectedTracks;
++        }
++
++        if ("resolution".equals(type)) {
++            for (int trackIndex = 0; trackIndex < mediaGroup.length; trackIndex++) {
++                if (mediaGroup.getFormat(trackIndex).height == requested) {
++                    selectedTracks.add(trackIndex);
++                    return selectedTracks;
++                }
++            }
++        }
++
++        return selectedTracks;
++    }
++
+     public void setSelectedTrack(int trackType, String type, String value) {
+         if (player == null || trackSelector == null) return;
+ 
+@@ -2209,6 +2771,14 @@ public class ReactExoplayerView extends FrameLayout implements
+             return;
+         }
+ 
++        // Video is resolved from the player's current tracks because the mapped info below
++        // reports no video groups once playback is running, which silently disables the
++        // renderer instead of switching quality. "disabled" keeps the shared handling.
++        if (trackType == C.TRACK_TYPE_VIDEO && !"disabled".equals(type)
++                && setSelectedVideoTrackFromCurrentTracks(rendererIndex, type, value)) {
++            return;
++        }
++
+         MappingTrackSelector.MappedTrackInfo info = trackSelector.getCurrentMappedTrackInfo();
+         if (info == null) {
+             return;
+@@ -2317,6 +2887,15 @@ public class ReactExoplayerView extends FrameLayout implements
+             groupIndex = getGroupIndexForDefaultLocale(groups);
+         }
+ 
++        if (trackType == C.TRACK_TYPE_AUDIO) {
++            groupIndex = getPreferredSupportedAudioGroupIndex(
++                    info,
++                    rendererIndex,
++                    groups,
++                    type,
++                    value);
++        }
++
+         if (groupIndex == C.INDEX_UNSET && trackType == C.TRACK_TYPE_VIDEO && groups.length != 0) { // Video auto
+             // Add all tracks as valid options for ABR to choose from
+             TrackGroup group = groups.get(0);
+@@ -2359,7 +2938,7 @@ public class ReactExoplayerView extends FrameLayout implements
+             DefaultTrackSelector.Parameters.Builder selectionParameters = trackSelector.getParameters()
+                     .buildUpon()
+                     .setExceedAudioConstraintsIfNecessary(true)
+-                    .setExceedRendererCapabilitiesIfNecessary(true)
++                    .setExceedRendererCapabilitiesIfNecessary(trackType != C.TRACK_TYPE_AUDIO)
+                     .setExceedVideoConstraintsIfNecessary(true)
+                     .setRendererDisabled(rendererIndex, false);
+ 
+@@ -2429,10 +3008,225 @@ public class ReactExoplayerView extends FrameLayout implements
+         return groupIndex;
+     }
+ 
++    private static final java.util.Set<String> PASSTHROUGH_AUDIO_MIME_TYPES =
++            new java.util.HashSet<>(java.util.Arrays.asList(
++                    "audio/eac3",
++                    "audio/eac3-joc",
++                    "audio/ac3",
++                    "audio/true-hd"
++            ));
++
++    private static final boolean FFMPEG_AUDIO_AVAILABLE;
++    static {
++        boolean available = false;
++        try {
++            available = androidx.media3.decoder.ffmpeg.FfmpegLibrary.isAvailable();
++        } catch (NoClassDefFoundError | Exception ignored) {}
++        FFMPEG_AUDIO_AVAILABLE = available;
++    }
++
++    private boolean isPassthroughOnlyMimeType(String mimeType) {
++        if (mimeType == null || !PASSTHROUGH_AUDIO_MIME_TYPES.contains(mimeType)) {
++            return false;
++        }
++        if (FFMPEG_AUDIO_AVAILABLE) {
++            return false;
++        }
++        try {
++            java.util.List<MediaCodecInfo> decoders =
++                    MediaCodecUtil.getDecoderInfos(mimeType, false, false);
++            for (MediaCodecInfo codecInfo : decoders) {
++                if (codecInfo.softwareOnly) {
++                    return false;
++                }
++            }
++        } catch (MediaCodecUtil.DecoderQueryException ignored) {}
++        return true;
++    }
++
++    private boolean isTrackSupported(
++            MappingTrackSelector.MappedTrackInfo info,
++            int rendererIndex,
++            int groupIndex,
++            int trackIndex
++    ) {
++        int support = RendererCapabilities.getFormatSupport(
++                info.getTrackSupport(rendererIndex, groupIndex, trackIndex));
++        if (support != C.FORMAT_HANDLED && support != C.FORMAT_EXCEEDS_CAPABILITIES) {
++            return false;
++        }
++        Format format = info.getTrackGroups(rendererIndex).get(groupIndex).getFormat(trackIndex);
++        if (isPassthroughOnlyMimeType(format.sampleMimeType)) {
++            return false;
++        }
++        return true;
++    }
++
++    private boolean isTrackGroupSupported(
++            MappingTrackSelector.MappedTrackInfo info,
++            int rendererIndex,
++            TrackGroupArray groups,
++            int groupIndex
++    ) {
++        if (groupIndex == C.INDEX_UNSET || groupIndex >= groups.length) {
++            return false;
++        }
++
++        TrackGroup group = groups.get(groupIndex);
++        for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
++            if (isTrackSupported(info, rendererIndex, groupIndex, trackIndex)) {
++                return true;
++            }
++        }
++
++        return false;
++    }
++
++    private int getFirstSupportedGroupIndex(
++            MappingTrackSelector.MappedTrackInfo info,
++            int rendererIndex,
++            TrackGroupArray groups
++    ) {
++        for (int groupIndex = 0; groupIndex < groups.length; groupIndex++) {
++            if (isTrackGroupSupported(info, rendererIndex, groups, groupIndex)) {
++                return groupIndex;
++            }
++        }
++
++        return C.INDEX_UNSET;
++    }
++
++    private int getPreferredSupportedAudioGroupIndex(
++            MappingTrackSelector.MappedTrackInfo info,
++            int rendererIndex,
++            TrackGroupArray groups,
++            String type,
++            String value
++    ) {
++        if (groups.length == 0) {
++            return C.INDEX_UNSET;
++        }
++
++        String resolvedType = TextUtils.isEmpty(type) ? "default" : type;
++        int preferredGroupIndex = C.INDEX_UNSET;
++
++        if ("language".equals(resolvedType)) {
++            for (int groupIndex = 0; groupIndex < groups.length; groupIndex++) {
++                Format format = groups.get(groupIndex).getFormat(0);
++                if (format.language != null
++                        && format.language.equals(value)
++                        && isTrackGroupSupported(info, rendererIndex, groups, groupIndex)) {
++                    preferredGroupIndex = groupIndex;
++                    break;
++                }
++            }
++        } else if ("title".equals(resolvedType)) {
++            for (int groupIndex = 0; groupIndex < groups.length; groupIndex++) {
++                Format format = groups.get(groupIndex).getFormat(0);
++                if (format.label != null
++                        && format.label.equals(value)
++                        && isTrackGroupSupported(info, rendererIndex, groups, groupIndex)) {
++                    preferredGroupIndex = groupIndex;
++                    break;
++                }
++            }
++        } else if ("index".equals(resolvedType)) {
++            int requestedIndex = ReactBridgeUtils.safeParseInt(value, C.INDEX_UNSET);
++            if (requestedIndex != C.INDEX_UNSET
++                    && requestedIndex < groups.length
++                    && isTrackGroupSupported(info, rendererIndex, groups, requestedIndex)) {
++                preferredGroupIndex = requestedIndex;
++            }
++        } else {
++            int localeGroupIndex = getGroupIndexForDefaultLocale(groups);
++            if (isTrackGroupSupported(info, rendererIndex, groups, localeGroupIndex)) {
++                preferredGroupIndex = localeGroupIndex;
++            }
++        }
++
++        if (preferredGroupIndex != C.INDEX_UNSET) {
++            return preferredGroupIndex;
++        }
++
++        return getFirstSupportedGroupIndex(info, rendererIndex, groups);
++    }
++
++    private int getSelectedGroupIndex(TrackSelection selection, TrackGroupArray groups) {
++        if (selection == null) {
++            return C.INDEX_UNSET;
++        }
++
++        TrackGroup selectedGroup = selection.getTrackGroup();
++        for (int groupIndex = 0; groupIndex < groups.length; groupIndex++) {
++            if (groups.get(groupIndex) == selectedGroup) {
++                return groupIndex;
++            }
++        }
++
++        return C.INDEX_UNSET;
++    }
++
++    private boolean recoverFromUnsupportedAudioTrack() {
++        if (player == null || trackSelector == null) {
++            return false;
++        }
++
++        MappingTrackSelector.MappedTrackInfo info = trackSelector.getCurrentMappedTrackInfo();
++        int rendererIndex = getTrackRendererIndex(C.TRACK_TYPE_AUDIO);
++        if (info == null || rendererIndex == C.INDEX_UNSET) {
++            return false;
++        }
++
++        TrackGroupArray groups = info.getTrackGroups(rendererIndex);
++        if (groups.length == 0) {
++            return false;
++        }
++
++        TrackSelection currentSelection = player.getCurrentTrackSelections().get(rendererIndex);
++        int currentGroupIndex = getSelectedGroupIndex(currentSelection, groups);
++        if (isTrackGroupSupported(info, rendererIndex, groups, currentGroupIndex)) {
++            return false;
++        }
++
++        int fallbackGroupIndex = getPreferredSupportedAudioGroupIndex(
++                info,
++                rendererIndex,
++                groups,
++                audioTrackType,
++                audioTrackValue);
++
++        if (fallbackGroupIndex == C.INDEX_UNSET || fallbackGroupIndex == currentGroupIndex) {
++            return false;
++        }
++
++        long currentPosition = Math.max(player.getCurrentPosition(), 0);
++        boolean playWhenReady = player.getPlayWhenReady();
++        DebugLog.w(TAG, "Retrying playback with supported audio track group=" + fallbackGroupIndex);
++        setSelectedAudioTrack("index", String.valueOf(fallbackGroupIndex));
++        player.prepare();
++        if (currentPosition > 0) {
++            player.seekTo(currentPosition);
++        }
++        player.setPlayWhenReady(playWhenReady);
++        return true;
++    }
++
+     public void setSelectedVideoTrack(String type, String value) {
+         videoTrackType = type;
+         videoTrackValue = value;
+-        if (!loadVideoStarted) setSelectedTrack(C.TRACK_TYPE_VIDEO, videoTrackType, videoTrackValue);
++
++        // Mirror setSelectedAudioTrack: apply as soon as the player can accept an
++        // override. Gating on loadVideoStarted dropped every selection made while a
++        // source was (re)preparing, so the value was stored and only replayed on the
++        // next videoLoaded() - leaving the quality menu with no effect on playback.
++        // videoLoaded() still replays the stored value for pre-load selections.
++        boolean canApplyNow = player != null && trackSelector != null;
++        DebugLog.w(TAG, "setSelectedVideoTrack: type=" + type + ", value=" + value
++                + ", loadVideoStarted=" + loadVideoStarted + ", canApplyNow=" + canApplyNow);
++
++        if (canApplyNow) {
++            setSelectedTrack(C.TRACK_TYPE_VIDEO, videoTrackType, videoTrackValue);
++        }
+     }
+ 
+     public void setSelectedAudioTrack(String type, String value) {
+diff --git a/node_modules/react-native-video/lib/specs/VideoNativeComponent.d.ts b/node_modules/react-native-video/lib/specs/VideoNativeComponent.d.ts
+index 76a0224..b3f0555 100644
+--- a/node_modules/react-native-video/lib/specs/VideoNativeComponent.d.ts
++++ b/node_modules/react-native-video/lib/specs/VideoNativeComponent.d.ts
+@@ -105,6 +105,8 @@ type BufferConfig = Readonly<{
+     bufferForPlaybackAfterRebufferMs?: Float;
+     maxHeapAllocationPercent?: Float;
+     backBufferDurationMs?: Float;
++    forwardBufferMB?: Int32;
++    backBufferMB?: Int32;
+     minBackBufferMemoryReservePercent?: Float;
+     minBufferMemoryReservePercent?: Float;
+     cacheSizeMB?: Float;
+diff --git a/node_modules/react-native-video/lib/types/video.d.ts b/node_modules/react-native-video/lib/types/video.d.ts
+index 67a9d63..ed8f23d 100644
+--- a/node_modules/react-native-video/lib/types/video.d.ts
++++ b/node_modules/react-native-video/lib/types/video.d.ts
+@@ -130,6 +130,8 @@ export type BufferConfig = {
+     bufferForPlaybackMs?: number;
+     bufferForPlaybackAfterRebufferMs?: number;
+     backBufferDurationMs?: number;
++    forwardBufferMB?: number;
++    backBufferMB?: number;
+     maxHeapAllocationPercent?: number;
+     minBackBufferMemoryReservePercent?: number;
+     minBufferMemoryReservePercent?: number;
+diff --git a/node_modules/react-native-video/src/specs/VideoNativeComponent.ts b/node_modules/react-native-video/src/specs/VideoNativeComponent.ts
+index 3dcbe01..2b8f2d9 100644
+--- a/node_modules/react-native-video/src/specs/VideoNativeComponent.ts
++++ b/node_modules/react-native-video/src/specs/VideoNativeComponent.ts
+@@ -138,6 +138,8 @@ type BufferConfig = Readonly<{
+   bufferForPlaybackAfterRebufferMs?: Float;
+   maxHeapAllocationPercent?: Float;
+   backBufferDurationMs?: Float; // Android
++  forwardBufferMB?: Int32; // Android
++  backBufferMB?: Int32; // Android
+   minBackBufferMemoryReservePercent?: Float;
+   minBufferMemoryReservePercent?: Float;
+   cacheSizeMB?: Float;
+diff --git a/node_modules/react-native-video/src/types/video.ts b/node_modules/react-native-video/src/types/video.ts
+index 0482944..0e45714 100644
+--- a/node_modules/react-native-video/src/types/video.ts
++++ b/node_modules/react-native-video/src/types/video.ts
+@@ -176,6 +176,8 @@ export type BufferConfig = {
+   bufferForPlaybackMs?: number;
+   bufferForPlaybackAfterRebufferMs?: number;
+   backBufferDurationMs?: number; // Android
++  forwardBufferMB?: number; // Android: forward buffer size cap
++  backBufferMB?: number; // Android: back buffer size cap
+   maxHeapAllocationPercent?: number;
+   minBackBufferMemoryReservePercent?: number;
+   minBufferMemoryReservePercent?: number;

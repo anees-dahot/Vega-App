@@ -1,0 +1,15 @@
+// Auto-applied by with-android-release-gradle config plugin
+if (project.android) {
+  project.android {
+    splits {
+      abi {
+        enable false
+      }
+    }
+    defaultConfig {
+      ndk {
+        abiFilters 'armeabi-v7a', 'arm64-v8a'
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+index 80c6803..3442bdd 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+@@ -117,6 +117,21 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+         // do nothing
+     }
+ 
++    // The hidden provider sandbox looks up download links while the app is in
++    // the background. Chromium throttles and freezes a WebView whose window is
++    // hidden, so the next queued download would only start once the app is
++    // opened again. Keep the sandbox reported as visible.
++    public boolean keepVisibleInBackground = false;
++
++    @Override
++    protected void onWindowVisibilityChanged(int visibility) {
++        if (keepVisibleInBackground && visibility != View.VISIBLE) {
++            super.onWindowVisibilityChanged(View.VISIBLE);
++            return;
++        }
++        super.onWindowVisibilityChanged(visibility);
++    }
++
+     @Override
+     public void onHostDestroy() {
+         cleanupCallbacksAndDestroy();
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
+index f83033b..fd9cdec 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
+@@ -388,6 +388,8 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+             if (source.hasKey("html")) {
+                 val html = source.getString("html")
+                 val baseUrl = if (source.hasKey("baseUrl")) source.getString("baseUrl") else ""
++                view.keepVisibleInBackground =
++                    baseUrl?.startsWith("https://provider-sandbox.invalid") == true
+                 view.loadDataWithBaseURL(
+                     baseUrl,
+                     html!!,

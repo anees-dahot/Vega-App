@@ -1,0 +1,504 @@
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import type {CompositeScreenProps} from '@react-navigation/native';
+import type {NativeStackScreenProps} from '@react-navigation/native-stack';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useFocusEffect} from '@react-navigation/native';
+import {
+  BackHandler,
+  Image,
+  ScrollView,
+  StatusBar,
+  Text,
+  View,
+  findNodeHandle,
+  UIManager,
+} from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
+import type {DownloadsStackParamList, RootStackParamList} from '../../App';
+import AppDialog from '../../components/AppDialog';
+import DropdownField from '../../components/ui/DropdownField';
+import {TVFocusable, TVFocusGuide} from '../../components/tv';
+import {isTV} from '../../lib/tv';
+import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
+import {downloadOutputExists} from '../../lib/downloadDestination';
+import {settingsStorage} from '../../lib/storage';
+import {formatDownloadBytes} from '../../lib/downloadFormatting';
+import {
+  groupCompletedDownloads,
+  sortDownloadedEpisodes,
+} from '../../lib/downloadLibrary';
+import type {DownloadItem} from '../../lib/zustand/downloadsStore';
+import useDownloadsStore, {
+  selectCompletedDownloads,
+} from '../../lib/zustand/downloadsStore';
+import {useM3Colors} from '../../theme/M3PaletteContext';
+import DownloadedEpisodeControls from './components/DownloadedEpisodeControls';
+import DownloadedEpisodeRow from './components/DownloadedEpisodeRow';
+import {deleteDownloadedItemAndSubtitles} from './utils/deleteDownloadedItem';
+import {shareDownloadedFile} from '../../lib/download/shareFile';
+import MoreLikeThis from '../home/components/MoreLikeThis';
+
+type DownloadedDetailsProps = CompositeScreenProps<
+  NativeStackScreenProps<DownloadsStackParamList, 'DownloadedDetails'>,
+  NativeStackScreenProps<RootStackParamList>
+>;
+
+const getSeasonTitle = (item: DownloadItem): string =>
+  item.seasonTitle || 'Downloaded';
+
+const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
+  const insets = useSafeAreaInsets();
+  const playerReturnFocusRef = useRef<View | null>(null);
+  const restorePlayerFocusRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTV || !restorePlayerFocusRef.current) return;
+      const timer = setTimeout(() => {
+        const handle = findNodeHandle(playerReturnFocusRef.current);
+        if (handle) {
+          UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+        }
+        restorePlayerFocusRef.current = false;
+      }, 350);
+      return () => clearTimeout(timer);
+    }, []),
+  );
+  const colors = useM3Colors();
+  const primary = colors.primary;
+  const focusBorderColor = useTVFocusBorderColor();
+  const completed = useDownloadsStore(selectCompletedDownloads);
+  const markMissing = useDownloadsStore(state => state.markMissing);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<DownloadItem | null>(null);
+  const [readMore, setReadMore] = useState(false);
+  const group = useMemo(
+    () =>
+      groupCompletedDownloads(completed).find(
+        item => item.id === route.params.groupId,
+      ),
+    [completed, route.params.groupId],
+  );
+  const seasons = useMemo(
+    () => [...new Set(group?.items.map(getSeasonTitle) || [])],
+    [group],
+  );
+  const seasonOptions = useMemo(
+    () => seasons.map(title => ({title})),
+    [seasons],
+  );
+  const [selectedSeason, setSelectedSeason] = useState<string | undefined>(
+    seasons[0],
+  );
+
+  useEffect(() => {
+    if (!selectedSeason || !seasons.includes(selectedSeason)) {
+      setSelectedSeason(seasons[0]);
+    }
+  }, [seasons, selectedSeason]);
+
+  const [searchText, setSearchText] = useState('');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+        navigation.goBack();
+        return true;
+      });
+      return () => backSub.remove();
+    }, [navigation]),
+  );
+
+  const items = useMemo(() => {
+    if (!group) {
+      return [];
+    }
+    let list = sortDownloadedEpisodes(
+      group.items.filter(item => getSeasonTitle(item) === selectedSeason),
+    );
+    if (searchText.trim()) {
+      const query = searchText.trim().toLowerCase();
+      list = list.filter(item =>
+        (item.episodeName || item.title || '').toLowerCase().includes(query),
+      );
+    }
+    if (sortOrder === 'desc') {
+      list = [...list].reverse();
+    }
+    return list;
+  }, [group, selectedSeason, searchText, sortOrder]);
+
+  if (!group) {
+    return (
+      <View className="flex-1 items-center justify-center bg-black px-6">
+        <Text className="text-center text-white/70">
+          This downloaded title is no longer available.
+        </Text>
+        <TVFocusable
+          hasTVPreferredFocus={isTV}
+          accessibilityRole="button"
+          borderRadius={14}
+          focusScale={1.05}
+          focusBorderColor={focusBorderColor}
+          style={{
+            backgroundColor: primary,
+            borderRadius: 14,
+            marginTop: 20,
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+          }}
+          onPress={() => navigation.goBack()}>
+          <Text className="font-semibold" style={{color: colors.onPrimary}}>
+            Go back
+          </Text>
+        </TVFocusable>
+      </View>
+    );
+  }
+
+  const metadata = group.items[0];
+  const totalBytes = group.items.reduce(
+    (total, item) => total + item.totalBytes,
+    0,
+  );
+
+  const playItem = async (item: DownloadItem) => {
+    if (!(await downloadOutputExists(item.filePath))) {
+      markMissing(item.id);
+      return;
+    }
+    const playableItems = items.filter(
+      candidate => candidate.status === 'completed',
+    );
+    navigation.navigate('Player', {
+      episodeList: playableItems.map(candidate => ({
+        id: candidate.id,
+        title: candidate.episodeName || candidate.title,
+        link: candidate.filePath,
+        sourceLink: candidate.sourceLink,
+        skip: candidate.skip,
+      })),
+      linkIndex: playableItems.findIndex(candidate => candidate.id === item.id),
+      type: item.type || (playableItems.length > 1 ? 'series' : 'movie'),
+      directUrl: item.filePath,
+      primaryTitle: group.title,
+      secondaryTitle: item.seasonTitle,
+      poster: {
+        poster: metadata.poster,
+        background: metadata.background,
+      },
+      providerValue: item.provider || metadata.provider || 'vega',
+      infoUrl: item.infoUrl || metadata.infoUrl,
+      alwaysCast: !isTV && settingsStorage.isAlwaysCastMode(),
+    });
+  };
+
+  // Promise chain instead of try/finally: React Compiler skips any component
+  // that contains a finally clause.
+  const deleteItem = async (item: DownloadItem) => {
+    if (deletingId) {
+      return;
+    }
+    setDeletingId(item.id);
+    await deleteDownloadedItemAndSubtitles(item).finally(() => {
+      setDeletingId(null);
+    });
+  };
+
+  const infoUrl = group.items.find(item => item.infoUrl)?.infoUrl;
+  const infoProvider =
+    group.items.find(item => item.infoUrl && item.provider)?.provider ||
+    metadata.provider;
+
+  // Opens the show's own page, where every episode (not just the downloaded
+  // ones) can be picked and downloaded.
+  const downloadMore = () => {
+    if (!infoUrl) {
+      return;
+    }
+    navigation.navigate('TabStack', {
+      screen: 'HomeStack',
+      params: {
+        screen: 'Info',
+        params: {link: infoUrl, provider: infoProvider, poster: metadata.poster},
+      },
+    });
+  };
+
+  const searchFor = (query: string) => {
+    navigation.navigate('TabStack', {
+      screen: 'SearchStack',
+      params: {screen: 'SearchResults', params: {filter: query}},
+    });
+  };
+
+  const backgroundImage =
+    metadata.background ||
+    metadata.poster ||
+    'https://placehold.jp/24/171717/ffffff/800x450.png?text=Vega';
+
+  return (
+    <TVFocusGuide autoFocus={true} trapFocusRight={true} style={{flex: 1, backgroundColor: '#000000'}}>
+      <StatusBar translucent backgroundColor="transparent" />
+      <View className="absolute h-[340px] w-full">
+        <Image
+          source={{uri: backgroundImage}}
+          className="h-[340px] w-full"
+          resizeMode="cover"
+          resizeMethod="resize"
+        />
+      </View>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View className="relative h-[340px] w-full">
+          <LinearGradient
+            colors={['rgba(0,0,0,0.08)', 'rgba(0,0,0,0.18)', '#000000']}
+            locations={[0, 0.55, 1]}
+            className="absolute h-full w-full"
+          />
+          <TVFocusable
+            hasTVPreferredFocus={isTV}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            borderRadius={18}
+            focusScale={1.1}
+            focusBorderColor={focusBorderColor}
+            onPress={() => navigation.goBack()}
+            style={{
+              alignItems: 'center',
+              backgroundColor: 'rgba(23,23,23,0.88)',
+              borderRadius: 18,
+              height: 48,
+              justifyContent: 'center',
+              marginLeft: isTV ? 24 : 20,
+              marginTop: isTV ? 24 : insets.top + 12,
+              width: 48,
+            }}>
+            <MaterialCommunityIcons
+              name="arrow-left"
+              size={26}
+              color={colors.onSurface}
+            />
+          </TVFocusable>
+          <View className="absolute bottom-3 right-0 w-full px-5">
+            <Text
+              className="text-3xl font-bold capitalize"
+              style={{color: colors.onBackground}}>
+              {group.title}
+            </Text>
+            <View className="mt-3 flex-row items-center">
+              <MaterialCommunityIcons
+                name="download-circle-outline"
+                size={18}
+                color={colors.primary}
+              />
+              <Text
+                className="ml-2 text-sm font-medium"
+                style={{color: colors.onSurfaceVariant}}>
+                {`${group.items.length} download${
+                  group.items.length === 1 ? '' : 's'
+                }`}
+                {'  '}·{'  '}
+                {formatDownloadBytes(totalBytes)}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View className="bg-black px-5 pb-6 pt-3">
+          {metadata.synopsis ? (
+            <View className="mb-7">
+              <Text
+                className="mb-2 text-xl font-bold"
+                style={{color: colors.onBackground}}>
+                Synopsis
+              </Text>
+              <Text
+                className="text-base leading-6"
+                style={{color: colors.onSurfaceVariant}}>
+                {metadata.synopsis.length > 240 && !readMore
+                  ? `${metadata.synopsis.slice(0, 240)}...`
+                  : metadata.synopsis}
+              </Text>
+              {metadata.synopsis.length > 240 ? (
+                <TVFocusable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    readMore ? 'Show less synopsis' : 'Read more synopsis'
+                  }
+                  onPress={() => setReadMore(value => !value)}
+                  borderRadius={8}
+                  focusScale={1.05}
+                  focusBorderColor={focusBorderColor}
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 4,
+                    alignSelf: 'flex-start',
+                  }}>
+                  <Text
+                    style={{
+                      color: colors.primary,
+                      fontSize: 14,
+                      fontWeight: '700',
+                    }}>
+                    {readMore ? 'Show less' : 'Read more'}
+                  </Text>
+                </TVFocusable>
+              ) : null}
+            </View>
+          ) : null}
+
+          {seasonOptions.length > 0 ? (
+            <DropdownField
+              options={seasonOptions}
+              value={seasonOptions.find(
+                option => option.title === selectedSeason,
+              )}
+              getKey={option => option.title}
+              getLabel={option => option.title}
+              onChange={option => setSelectedSeason(option.title)}
+            />
+          ) : null}
+
+          {/* Search and Sort Controls */}
+          {(group.items.length > 2 || searchText) && (
+            <DownloadedEpisodeControls
+              searchText={searchText}
+              onSearchChange={setSearchText}
+              sortOrder={sortOrder}
+              onToggleSort={() =>
+                setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
+              }
+            />
+          )}
+
+          <View className="mt-6 flex-row" style={{gap: 12}}>
+            {infoUrl ? (
+              <TVFocusable
+                accessibilityRole="button"
+                accessibilityLabel="Download more episodes"
+                borderRadius={14}
+                focusScale={1.05}
+                focusBorderColor={focusBorderColor}
+                onPress={downloadMore}
+                style={{
+                  alignItems: 'center',
+                  backgroundColor: primary,
+                  borderRadius: 14,
+                  flex: 1,
+                  flexDirection: 'row',
+                  justifyContent: 'center',
+                  paddingVertical: 12,
+                }}>
+                <MaterialCommunityIcons
+                  name="download-multiple"
+                  size={20}
+                  color={colors.onPrimary}
+                />
+                <Text
+                  className="ml-2 font-semibold"
+                  style={{color: colors.onPrimary}}>
+                  Download more
+                </Text>
+              </TVFocusable>
+            ) : null}
+            <TVFocusable
+              accessibilityRole="button"
+              accessibilityLabel="Find on other providers"
+              borderRadius={14}
+              focusScale={1.05}
+              focusBorderColor={focusBorderColor}
+              onPress={() => searchFor(group.title)}
+              style={{
+                alignItems: 'center',
+                backgroundColor: colors.surfaceContainerHigh,
+                borderRadius: 14,
+                flex: 1,
+                flexDirection: 'row',
+                justifyContent: 'center',
+                paddingVertical: 12,
+              }}>
+              <MaterialCommunityIcons
+                name="magnify"
+                size={20}
+                color={colors.onSurface}
+              />
+              <Text
+                className="ml-2 font-semibold"
+                style={{color: colors.onSurface}}>
+                Find elsewhere
+              </Text>
+            </TVFocusable>
+          </View>
+
+          <Text
+            className="mb-3 mt-7 text-xl font-bold"
+            style={{color: colors.onBackground}}>
+            Ready to watch
+          </Text>
+          {items.length === 0 && searchText ? (
+            <Text
+              className="my-4 text-center text-sm"
+              style={{color: colors.onSurfaceVariant}}>
+              No downloaded episodes found for "{searchText}"
+            </Text>
+          ) : null}
+          {items.map((item, index) => (
+            <DownloadedEpisodeRow
+              key={item.id}
+              item={item}
+              index={index}
+              totalItems={items.length}
+              isDeleting={deletingId === item.id}
+              onPlay={playItem}
+              onBeforePlay={control => {
+                if (!isTV) return;
+                playerReturnFocusRef.current = control;
+                restorePlayerFocusRef.current = true;
+              }}
+              onDelete={setPendingDelete}
+              onShare={item => {
+                shareDownloadedFile(item).catch(console.error);
+              }}
+            />
+          ))}
+          <MoreLikeThis
+            title={group.title}
+            imdbId={metadata.imdbId}
+            type={metadata.type}
+            onSearch={searchFor}
+          />
+        </View>
+        <View className="h-16" />
+      </ScrollView>
+      <AppDialog
+        visible={pendingDelete !== null}
+        title="Delete download?"
+        message={`Remove ${
+          pendingDelete?.episodeName || pendingDelete?.title || 'this download'
+        } from your device?`}
+        primary={primary}
+        variant="warning"
+        actions={[
+          {label: 'Cancel'},
+          {
+            label: 'Delete',
+            variant: 'destructive',
+            onPress: () => {
+              const item = pendingDelete;
+              setPendingDelete(null);
+              if (item) {
+                deleteItem(item);
+              }
+            },
+          },
+        ]}
+        onDismiss={() => setPendingDelete(null)}
+      />
+    </TVFocusGuide>
+  );
+};
+
+export default DownloadedDetails;
