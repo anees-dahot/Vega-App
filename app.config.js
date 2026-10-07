@@ -206,7 +206,7 @@ module.exports = () => {
         isFork: IS_FORK,
         // GitHub "owner/repo" whose releases the app updates from. The release
         // workflow sets it to the repository it builds in.
-        updateRepo: process.env.UPDATE_REPO || '',
+        updateRepo: process.env.UPDATE_REPO || (IS_FORK ? 'anees-dahot/Vega-App' : ''),
         isTV: IS_TV,
         tmdbApiKey,
         proxyApiUrl,
